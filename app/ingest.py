@@ -6,7 +6,7 @@ from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
-from app.config import CHROMA_DIR, RAW_DOCS_DIR, CHUNK_SIZE, CHUNK_OVERLAP
+from app.config import CHROMA_DIR, EMBEDDING_MODEL, RAW_DOCS_DIR, CHUNK_SIZE, CHUNK_OVERLAP
 
 
 def load_pdf(path: str, filename: str) -> list[Document]:
@@ -74,7 +74,7 @@ def build_vector_store():
     # Rebuild from scratch each run: avoids duplicate chunks and stale/corrupted collections
     shutil.rmtree(CHROMA_DIR, ignore_errors=True)
 
-    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
     vector_store = Chroma.from_documents(
         documents=chunks,
         embedding=embeddings,
