@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 from pypdf import PdfReader
 from bs4 import BeautifulSoup
@@ -21,14 +22,28 @@ def load_pdf(path: str, filename: str) -> list[Document]:
     return docs
 
 
+BLOCK_TAGS = ["p", "div", "section", "li", "tr", "br", "h1", "h2", "h3", "h4", "h5", "h6", "table", "ul", "ol", "dt", "dd"]
+# Docs-site chrome that isn't inside <nav>/<header>: tables of contents, breadcrumbs, copy/feedback buttons
+CHROME_SELECTOR = "[class*=toc], [id*=toc], [aria-label*=breadcrumb], [role=navigation], button, form, svg"
+
+
 def load_html(path: str, filename: str) -> list[Document]:
     with open(path, encoding="utf-8", errors="ignore") as f:
         soup = BeautifulSoup(f, "html.parser")
     # Remove page chrome so only the actual article text gets embedded
     for tag in soup(["script", "style", "nav", "header", "footer", "aside"]):
         tag.decompose()
-    main = soup.find("main") or soup.find("article") or soup.body or soup
-    text = main.get_text(separator="\n", strip=True)
+    for tag in soup.select(CHROME_SELECTOR):
+        tag.decompose()
+    main = soup.find("article") or soup.find("main") or soup.body or soup
+
+    # Keep code blocks intact: syntax highlighters wrap every token in its own <span>
+    for pre in main.find_all("pre"):
+        pre.replace_with(f"\n```\n{pre.get_text().strip()}\n```\n")
+    # Newlines only between block elements, so inline <code>/<a>/<strong> stay inside their sentence
+    for tag in main.find_all(BLOCK_TAGS):
+        tag.insert_after("\n")
+    text = re.sub(r"\n\s*\n+", "\n\n", main.get_text()).strip()
     return [Document(page_content=text, metadata={"source": filename, "page": 1})] if text else []
 
 
@@ -72,7 +87,13 @@ def build_vector_store():
         raise SystemExit("No text extracted from data/raw_docs - check your files. Vector store NOT built.")
 
     # Rebuild from scratch each run: avoids duplicate chunks and stale/corrupted collections
-    shutil.rmtree(CHROMA_DIR, ignore_errors=True)
+    # Without this check a locked folder (server still running on Windows) is silently kept and chunks get duplicated
+    try:
+        shutil.rmtree(CHROMA_DIR)
+    except FileNotFoundError:
+        pass
+    except PermissionError:
+        raise SystemExit(f"Cannot delete {CHROMA_DIR} - stop the running server (uvicorn) first, then re-run ingest.")
 
     embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
     vector_store = Chroma.from_documents(

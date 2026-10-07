@@ -1,5 +1,8 @@
 ## 5. Retrieval + generation chain (the "RAG" part)
 
+import os
+from functools import lru_cache
+
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_anthropic import ChatAnthropic
@@ -8,23 +11,32 @@ from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from app.config import CHROMA_DIR, ANTHROPIC_API_KEY, EMBEDDING_MODEL
 
-PROMPT_TEMPLATE = """You are a DevOps documentation assistant 
-helping engineers quickly find accurate answers during development and incident response. Answer using ONLY the provided 
-context. If the answer isn't in the context, say you don't have enough information —
-never guess, especially about production behavior.
+PROMPT_TEMPLATE = """You are a DevOps documentation assistant helping engineers quickly find accurate
+answers during development and incident response. Answer using ONLY the provided context.
+
+Rules:
+- Answer the exact question in your first sentence or two. Do not lead with loosely related material.
+- If the context only partly covers the question, say so up front, then give what it does cover.
+- If the context doesn't cover it at all, say you don't have enough information. Never guess,
+  especially about production behavior.
+- Include commands or config from the context when they help, in fenced code blocks with a language tag.
+- Use Markdown, no top-level heading. Do not list sources at the end - they are shown separately.
 
 Context:
 {context}
 
-Question: {question}
+Question: {question}"""
 
-Answer clearly and concisely, the way you'd want an answer during an incident. After your
-answer, list the source(s) you used."""
-
+@lru_cache(maxsize=1)
 def get_qa_chain():
+    # Built once per process: loading the embedding model and opening Chroma is slow
+    if not os.path.isdir(CHROMA_DIR):
+        raise RuntimeError(f"Vector store not found at {CHROMA_DIR} - run `python -m app.ingest` first.")
+
     embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
     vector_store = Chroma(persist_directory=CHROMA_DIR, embedding_function=embeddings)
-    retriever = vector_store.as_retriever(search_kwargs={"k": 4})
+    # MMR: fetch 20 candidates, keep 6 diverse ones, so near-duplicate chunks don't crowd out the useful one
+    retriever = vector_store.as_retriever(search_type="mmr", search_kwargs={"k": 6, "fetch_k": 20})
 
     llm = ChatAnthropic(
         model="claude-haiku-4-5-20251001",
@@ -56,12 +68,16 @@ def ask_question(question: str):
     chain = get_qa_chain()
     result = chain.invoke({"question": question})
 
+    # Several chunks often come from the same page; list each file/page once
     sources = []
     for doc in result["source_documents"]:
-        sources.append({
+        source = {
             "file": doc.metadata.get("source", "unknown"),
-            "page": doc.metadata.get("page", "?"),
-        })
+            # Page numbers only mean something for PDFs; HTML/Markdown are loaded as one section
+            "page": doc.metadata.get("page") if doc.metadata.get("source", "").lower().endswith(".pdf") else None,
+        }
+        if source not in sources:
+            sources.append(source)
 
     return {
         "answer": result["answer"],
