@@ -1,6 +1,8 @@
 ## 5. Retrieval + generation chain (the "RAG" part)
 
+import logging
 import os
+from collections import defaultdict
 from functools import lru_cache
 
 from langchain_chroma import Chroma
@@ -11,6 +13,8 @@ from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from app.config import CHROMA_DIR, ANTHROPIC_API_KEY, EMBEDDING_MODEL
 
+logger = logging.getLogger("uvicorn.error")
+
 PROMPT_TEMPLATE = """You are a DevOps documentation assistant helping engineers quickly find accurate
 answers during development and incident response. Answer using ONLY the provided context.
 
@@ -20,12 +24,24 @@ Rules:
 - If the context doesn't cover it at all, say you don't have enough information. Never guess,
   especially about production behavior.
 - Include commands or config from the context when they help, in fenced code blocks with a language tag.
+  Copy each example verbatim from ONE source. Never merge examples from different sources or change
+  their values - invalid config is worse than none. Prefer the most complete, self-contained example.
 - Use Markdown, no top-level heading. Do not list sources at the end - they are shown separately.
 
 Context:
 {context}
 
 Question: {question}"""
+
+# Query rewriting ("code HyDE"): chunks that are mostly YAML/commands embed far from a plain-English
+# question, but close to a similar snippet. So we ask the LLM for the snippet the answer would
+# contain and search with it alongside the original question.
+REWRITE_TEMPLATE = """Write the minimal config file or shell commands that would appear in documentation answering this DevOps question. Output only the raw snippet, no explanation, no code fences. If the question isn't about config or commands, write one short sentence a doc page would use to answer it.
+
+Question: {question}"""
+
+TOP_K = 6             # chunks passed to the LLM
+FETCH_PER_QUERY = 10  # candidates per query before fusion
 
 @lru_cache(maxsize=1)
 def get_qa_chain():
@@ -35,14 +51,22 @@ def get_qa_chain():
 
     embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
     vector_store = Chroma(persist_directory=CHROMA_DIR, embedding_function=embeddings)
-    # MMR: fetch 20 candidates, keep 6 diverse ones, so near-duplicate chunks don't crowd out the useful one
-    retriever = vector_store.as_retriever(search_type="mmr", search_kwargs={"k": 6, "fetch_k": 20})
 
     llm = ChatAnthropic(
         model="claude-haiku-4-5-20251001",
         api_key=ANTHROPIC_API_KEY,
         temperature=0,
     )
+    rewrite_llm = llm.bind(max_tokens=300)
+
+    def retrieve(question: str):
+        try:
+            snippet = rewrite_llm.invoke(REWRITE_TEMPLATE.format(question=question)).content.strip()
+        except Exception:
+            logger.warning("Query rewrite failed; searching with the original question only", exc_info=True)
+            snippet = ""
+        queries = [question, snippet] if snippet else [question]
+        return fuse_results([vector_store.similarity_search(q, k=FETCH_PER_QUERY) for q in queries], k=TOP_K)
 
     prompt = PromptTemplate.from_template(PROMPT_TEMPLATE)
 
@@ -55,9 +79,25 @@ def get_qa_chain():
     )
 
     qa_chain = RunnablePassthrough.assign(
-        source_documents=lambda x: retriever.invoke(x["question"])
+        source_documents=lambda x: retrieve(x["question"])
     ).assign(answer=answer_chain)
     return qa_chain
+
+def fuse_results(results, k):
+    """Merge ranked result lists with Reciprocal Rank Fusion (RRF).
+
+    Each query's #1 hit is always kept: the snippet query often finds the one
+    chunk with the example (e.g. a compose.yaml) that the question alone ranks low,
+    and plain RRF would let the question's many prose matches outvote it.
+    """
+    scores, docs = defaultdict(float), {}
+    for ranked in results:
+        for rank, doc in enumerate(ranked):
+            scores[doc.page_content] += 1 / (60 + rank)
+            docs[doc.page_content] = doc
+    picked = list(dict.fromkeys(ranked[0].page_content for ranked in results if ranked))
+    picked += [c for c in sorted(scores, key=scores.get, reverse=True) if c not in picked]
+    return [docs[c] for c in picked[:k]]
 
 def format_docs(docs):
     return "\n\n".join(
