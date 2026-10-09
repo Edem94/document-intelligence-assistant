@@ -26,6 +26,8 @@ Rules:
 - Include commands or config from the context when they help, in fenced code blocks with a language tag.
   Copy each example verbatim from ONE source. Never merge examples from different sources or change
   their values - invalid config is worse than none. Prefer the most complete, self-contained example.
+- If an example depends on something defined elsewhere (another file, a service, environment variables),
+  say so explicitly, and show that dependency too if it is in the context.
 - Use Markdown, no top-level heading. Do not list sources at the end - they are shown separately.
 
 Context:

@@ -1,0 +1,147 @@
+[
+  {
+    "id": "compose-define-multi",
+    "question": "How do I define a multi-container app with Docker Compose?",
+    "expected_sources": ["docker_compose_quickstart.html"],
+    "must_include": ["services:", "docker compose up"],
+    "must_match": ["(?m)^ +redis:\\s*\\n +image:"],
+    "answerable": true,
+    "notes": "Ideal answer shows the quickstart's two-service web + redis compose.yaml. Known weak spot: retrieval prefers the conceptual Docker_Compose_multi-container_apps.html page."
+  },
+  {
+    "id": "compose-healthcheck",
+    "question": "How do I make the web service wait until Redis is healthy before it starts?",
+    "expected_sources": ["docker_compose_quickstart.html"],
+    "must_include": ["depends_on", "service_healthy", "healthcheck"],
+    "answerable": true
+  },
+  {
+    "id": "compose-persist-data",
+    "question": "My Redis counter resets after docker compose down. How do I keep the data?",
+    "expected_sources": ["docker_compose_quickstart.html"],
+    "must_include": ["volumes", "redis-data"],
+    "answerable": true
+  },
+  {
+    "id": "compose-multiple-files",
+    "question": "How do I combine multiple Compose files, and which file's settings win?",
+    "expected_sources": ["docker_compose.md"],
+    "must_include": ["-f", ["override", "overrides", "overridden"]],
+    "answerable": true
+  },
+  {
+    "id": "compose-vs-dockerfile",
+    "question": "What is the difference between a Dockerfile and a Compose file?",
+    "expected_sources": ["docker_compose.html"],
+    "must_include": ["image", ["running containers", "containers"]],
+    "answerable": true
+  },
+  {
+    "id": "container-what",
+    "question": "What is a container and why would I use one?",
+    "expected_sources": ["docker_containers.html"],
+    "must_include": [["isolated", "isolation"]],
+    "answerable": true
+  },
+  {
+    "id": "k8s-pod-what",
+    "question": "What is a Pod in Kubernetes?",
+    "expected_sources": ["kubernetes_pods.md"],
+    "must_include": ["smallest deployable", "container"],
+    "answerable": true
+  },
+  {
+    "id": "k8s-static-pods",
+    "question": "What are static Pods and what manages them?",
+    "expected_sources": ["kubernetes_pods.md"],
+    "must_include": ["kubelet"],
+    "answerable": true
+  },
+  {
+    "id": "k8s-restart-pod",
+    "question": "How do I restart a Kubernetes pod?",
+    "expected_sources": ["kubernetes_pods.md"],
+    "must_include": [["delete", "deleted"], ["controller", "Deployment", "workload"]],
+    "answerable": true,
+    "notes": "Only partly covered: the docs explain Pods are replaced via controllers, not restarted. A good answer says so up front and does not invent kubectl commands that aren't in the docs."
+  },
+  {
+    "id": "k8s-hybrid-cluster",
+    "question": "Can a single Kubernetes cluster span on-premises and cloud machines?",
+    "expected_sources": ["kubernetes_cluster_administration.md"],
+    "must_include": [["multiple clusters", "hybrid"]],
+    "answerable": true
+  },
+  {
+    "id": "azure-first-pipeline",
+    "question": "How do I create my first pipeline in Azure Pipelines?",
+    "expected_sources": ["azure_pipelines_create_first_pipeline.md"],
+    "must_include": ["azure-pipelines.yml", "Save and run"],
+    "answerable": true
+  },
+  {
+    "id": "azure-artifacts-types",
+    "question": "Which package types can I publish to Azure Artifacts from a pipeline?",
+    "expected_sources": ["azure_artifacts.md"],
+    "must_include": ["NuGet", "npm", "Maven"],
+    "answerable": true
+  },
+  {
+    "id": "azure-pipelines-what",
+    "question": "What is Azure Pipelines?",
+    "expected_sources": ["azure_pipelines_overview.html"],
+    "must_include": [["continuous integration", "CI/CD", "CI"]],
+    "answerable": true
+  },
+  {
+    "id": "cloudrun-resource-types",
+    "question": "What are the different ways to run code on Cloud Run?",
+    "expected_sources": ["Google_Cloud_Run_Docs.html"],
+    "must_include": ["service", "job", ["worker pool", "worker pools"]],
+    "answerable": true
+  },
+  {
+    "id": "cloudrun-scale-to-zero",
+    "question": "Can a Cloud Run service scale down to zero instances?",
+    "expected_sources": ["Google_Cloud_Run_Docs.html"],
+    "must_include": [["scale to zero", "scales to zero", "zero instances"]],
+    "answerable": true
+  },
+  {
+    "id": "gh-incident-first-step",
+    "question": "What should I do first when responding to a security incident in my GitHub enterprise?",
+    "expected_sources": ["GitHub_Respond_to_security_incident.html"],
+    "must_include": [["assess", "validate"]],
+    "answerable": true
+  },
+  {
+    "id": "gh-incident-leaked-creds",
+    "question": "Credentials were leaked in our GitHub organization. How do I contain the threat?",
+    "expected_sources": ["GitHub_Respond_to_security_incident.html"],
+    "must_include": ["revoke"],
+    "answerable": true
+  },
+  {
+    "id": "copilot-incident-cause",
+    "question": "What caused the GitHub Copilot incident on July 29, 2026, and how severe was it?",
+    "expected_sources": ["incident_github_copilot_AI.html"],
+    "must_include": [["upstream", "model provider"], "21%"],
+    "answerable": true
+  },
+  {
+    "id": "oos-terraform-backend",
+    "question": "How do I configure a Terraform S3 backend for remote state?",
+    "expected_sources": [],
+    "must_include": [],
+    "answerable": false,
+    "notes": "Not in the corpus. The assistant must say it doesn't have enough information instead of answering from general knowledge."
+  },
+  {
+    "id": "oos-helm-install",
+    "question": "How do I install a Helm chart into my Kubernetes cluster?",
+    "expected_sources": [],
+    "must_include": [],
+    "answerable": false,
+    "notes": "Kubernetes docs are in the corpus but Helm is not - tempting to answer from general knowledge."
+  }
+]
