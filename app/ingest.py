@@ -1,6 +1,7 @@
 import os
 import re
 import shutil
+from collections import defaultdict
 from pypdf import PdfReader
 from bs4 import BeautifulSoup
 from langchain_core.documents import Document
@@ -75,6 +76,13 @@ def load_and_split_documents():
 
     splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
     chunks = splitter.split_documents(documents)
+    # Position of each chunk within its file, so retrieval can pull in neighbouring chunks
+    # (e.g. the "Step 2: ..." intro right before a YAML example, or the file an example includes)
+    counters = defaultdict(int)
+    for chunk in chunks:
+        source = chunk.metadata["source"]
+        chunk.metadata["chunk_index"] = counters[source]
+        counters[source] += 1
     print(f"Split into {len(chunks)} chunks")
     return chunks
 

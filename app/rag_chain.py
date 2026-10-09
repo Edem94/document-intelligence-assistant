@@ -1,8 +1,6 @@
 ## 5. Retrieval + generation chain (the "RAG" part)
 
-import logging
 import os
-from collections import defaultdict
 from functools import lru_cache
 
 from langchain_chroma import Chroma
@@ -12,8 +10,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from app.config import CHROMA_DIR, ANTHROPIC_API_KEY, EMBEDDING_MODEL
-
-logger = logging.getLogger("uvicorn.error")
+from app.retrieval import Retriever
 
 PROMPT_TEMPLATE = """You are a DevOps documentation assistant helping engineers quickly find accurate
 answers during development and incident response. Answer using ONLY the provided context.
@@ -26,24 +23,18 @@ Rules:
 - Include commands or config from the context when they help, in fenced code blocks with a language tag.
   Copy each example verbatim from ONE source. Never merge examples from different sources or change
   their values - invalid config is worse than none. Prefer the most complete, self-contained example.
-- If an example depends on something defined elsewhere (another file, a service, environment variables),
-  say so explicitly, and show that dependency too if it is in the context.
+- For "how do I define/create/set up" questions, lead with the most complete working example in the context.
+- Dependencies: after EACH code example, check whether it (a) uses ${{VARIABLES}}, (b) points to another file
+  (include, env_file, extends, a build context with a Dockerfile), or (c) references a service it doesn't define
+  (e.g. under depends_on). If so, add a line starting with "**Requires:**" naming each one, and show its
+  definition from the context (e.g. the .env file or the included file). If the definition isn't in the
+  context, say so instead of inventing it.
 - Use Markdown, no top-level heading. Do not list sources at the end - they are shown separately.
 
 Context:
 {context}
 
 Question: {question}"""
-
-# Query rewriting ("code HyDE"): chunks that are mostly YAML/commands embed far from a plain-English
-# question, but close to a similar snippet. So we ask the LLM for the snippet the answer would
-# contain and search with it alongside the original question.
-REWRITE_TEMPLATE = """Write the minimal config file or shell commands that would appear in documentation answering this DevOps question. Output only the raw snippet, no explanation, no code fences. If the question isn't about config or commands, write one short sentence a doc page would use to answer it.
-
-Question: {question}"""
-
-TOP_K = 6             # chunks passed to the LLM
-FETCH_PER_QUERY = 10  # candidates per query before fusion
 
 @lru_cache(maxsize=1)
 def get_qa_chain():
@@ -59,16 +50,7 @@ def get_qa_chain():
         api_key=ANTHROPIC_API_KEY,
         temperature=0,
     )
-    rewrite_llm = llm.bind(max_tokens=300)
-
-    def retrieve(question: str):
-        try:
-            snippet = rewrite_llm.invoke(REWRITE_TEMPLATE.format(question=question)).content.strip()
-        except Exception:
-            logger.warning("Query rewrite failed; searching with the original question only", exc_info=True)
-            snippet = ""
-        queries = [question, snippet] if snippet else [question]
-        return fuse_results([vector_store.similarity_search(q, k=FETCH_PER_QUERY) for q in queries], k=TOP_K)
+    retrieve = Retriever(vector_store, llm)
 
     prompt = PromptTemplate.from_template(PROMPT_TEMPLATE)
 
@@ -84,22 +66,6 @@ def get_qa_chain():
         source_documents=lambda x: retrieve(x["question"])
     ).assign(answer=answer_chain)
     return qa_chain
-
-def fuse_results(results, k):
-    """Merge ranked result lists with Reciprocal Rank Fusion (RRF).
-
-    Each query's #1 hit is always kept: the snippet query often finds the one
-    chunk with the example (e.g. a compose.yaml) that the question alone ranks low,
-    and plain RRF would let the question's many prose matches outvote it.
-    """
-    scores, docs = defaultdict(float), {}
-    for ranked in results:
-        for rank, doc in enumerate(ranked):
-            scores[doc.page_content] += 1 / (60 + rank)
-            docs[doc.page_content] = doc
-    picked = list(dict.fromkeys(ranked[0].page_content for ranked in results if ranked))
-    picked += [c for c in sorted(scores, key=scores.get, reverse=True) if c not in picked]
-    return [docs[c] for c in picked[:k]]
 
 def format_docs(docs):
     return "\n\n".join(

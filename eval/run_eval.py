@@ -82,6 +82,23 @@ def invented_code_lines(answer: str, docs) -> list[str]:
     return invented
 
 
+def undisclosed_dependencies(answer: str) -> list[str]:
+    """Dependencies used in code examples that the rest of the answer never explains.
+
+    - ${VARS} need the answer to mention where they come from (.env / environment variables)
+    - an included file (include: - path: ./infra.yaml) must be named again outside its include line
+    """
+    code = "\n".join(re.findall(r"```[^\n]*\n(.*?)```", answer, re.DOTALL))
+    problems = []
+    variables = sorted(set(re.findall(r"\$\{(\w+)", code)))
+    if variables and not re.search(r"\.env\b|environment variable", answer, re.IGNORECASE):
+        problems.append("unexplained variables: " + ", ".join(variables))
+    for path in set(re.findall(r"path:\s*\.?/?([\w./-]+\.ya?ml)", code)):
+        if answer.count(path.split("/")[-1]) < 2:
+            problems.append(f"included file not shown or explained: {path}")
+    return problems
+
+
 def judge(judge_llm, case: dict, answer: str, docs) -> dict:
     reply = judge_llm.invoke(JUDGE_PROMPT.format(question=case["question"], context=format_docs(docs), answer=answer))
     match = re.search(r"\{.*\}", reply.content, re.DOTALL)
@@ -108,8 +125,9 @@ def run_case(chain, judge_llm, case: dict) -> dict:
         row["missing_keywords"] += [f"/{p}/" for p in case.get("must_match", []) if not re.search(p, answer)]
         row["false_refusal"] = bool(HARD_REFUSAL_RE.search(answer))
         row["invented_code"] = invented_code_lines(answer, docs)
-        row["passed"] = (row["retrieval_hit"] and not row["missing_keywords"]
-                         and not row["false_refusal"] and not row["invented_code"])
+        row["undisclosed_deps"] = undisclosed_dependencies(answer)
+        row["passed"] = (row["retrieval_hit"] and not row["missing_keywords"] and not row["false_refusal"]
+                         and not row["invented_code"] and not row["undisclosed_deps"])
     else:
         row["refused"] = bool(REFUSAL_RE.search(answer))
         row["passed"] = row["refused"]
@@ -131,6 +149,7 @@ def summarize(rows: list[dict]) -> dict:
         "keyword_pass_rate_pct": pct(sum(not r["missing_keywords"] for r in answerable), len(answerable)),
         "false_refusals": sum(r["false_refusal"] for r in answerable),
         "answers_with_invented_code": sum(bool(r["invented_code"]) for r in answerable),
+        "answers_with_undisclosed_deps": sum(bool(r["undisclosed_deps"]) for r in answerable),
         "out_of_scope_refusal_rate_pct": pct(sum(r["refused"] for r in oos), len(oos)),
         "avg_faithfulness": avg("faithfulness"),
         "avg_completeness": avg("completeness"),
@@ -147,6 +166,8 @@ def print_report(rows: list[dict], summary: dict):
             problems.append("missing: " + ", ".join(r["missing_keywords"]))
         if r.get("false_refusal"):
             problems.append("refused an answerable question")
+        if r.get("undisclosed_deps"):
+            problems.append("; ".join(r["undisclosed_deps"]))
         if r.get("invented_code"):
             problems.append("code not in docs: " + "; ".join(r["invented_code"][:3]))
         if not r["answerable"] and not r["refused"]:
