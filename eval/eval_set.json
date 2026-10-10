@@ -23,6 +23,14 @@
     "answerable": true
   },
   {
+    "id": "compose-watch-live-updates",
+    "question": "How do I get my code changes picked up automatically while developing with Docker Compose?",
+    "expected_sources": ["docker_compose_quickstart.html"],
+    "must_include": ["develop", "watch", "--watch", "sync+restart"],
+    "answerable": true,
+    "notes": "Compose Watch only runs with `docker compose up --watch`; a plain `docker compose up` silently ignores the develop.watch rules."
+  },
+  {
     "id": "compose-multiple-files",
     "question": "How do I combine multiple Compose files, and which file's settings win?",
     "expected_sources": ["docker_compose.md"],
@@ -63,6 +71,7 @@
     "expected_sources": ["kubernetes_pods.md"],
     "must_include": [["delete", "deleted"], ["controller", "Deployment", "workload"]],
     "answerable": true,
+    "partial": true,
     "notes": "Only partly covered: the docs explain Pods are replaced via controllers, not restarted. A good answer says so up front and does not invent kubectl commands that aren't in the docs."
   },
   {

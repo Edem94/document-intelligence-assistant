@@ -6,7 +6,8 @@
 #
 # Case fields: question, expected_sources (retrieval hit = any one retrieved), answerable,
 # must_include (case-insensitive substrings; a nested list means "any of these"),
-# must_match (optional regexes on the answer), notes.
+# must_match (optional regexes on the answer), partial (docs only partly answer it, so an
+# "I don't have enough information to answer completely" opening is fine), notes.
 
 import argparse
 import json
@@ -67,7 +68,8 @@ def invented_code_lines(answer: str, docs) -> list[str]:
     Catches merged or edited examples (e.g. an invented `image: redis`), which an LLM judge
     tends to wave through. Indentation is ignored. Config lines must match a whole context line
     (so `image: redis` doesn't pass because `image: redis:alpine` exists); shell commands only need
-    to appear somewhere, since docs often mention them inline without a "$ " prompt.
+    to appear somewhere, since docs often mention them inline without a "$ " prompt. Lines that are
+    only an elision marker ("# ...", "...") are allowed.
     """
     context_text = "\n".join(d.page_content for d in docs)
     context_lines = {line.strip() for line in context_text.splitlines()}
@@ -75,6 +77,8 @@ def invented_code_lines(answer: str, docs) -> list[str]:
     for block in re.findall(r"```[^\n]*\n(.*?)```", answer, re.DOTALL):
         for line in (l.strip() for l in block.splitlines()):
             if not line or line in context_lines:
+                continue
+            if re.fullmatch(r"(#|//)?\s*\.\.\..*", line):  # an explicit "# ..." elision isn't invented config
                 continue
             if line.startswith("$ ") and line[2:] in context_text:
                 continue
@@ -87,6 +91,8 @@ def undisclosed_dependencies(answer: str) -> list[str]:
 
     - ${VARS} need the answer to mention where they come from (.env / environment variables)
     - an included file (include: - path: ./infra.yaml) must be named again outside its include line
+    - features that silently do nothing without a flag: `develop: watch` needs `--watch`
+      (or `docker compose watch`), service `profiles:` need `--profile`
     """
     code = "\n".join(re.findall(r"```[^\n]*\n(.*?)```", answer, re.DOTALL))
     problems = []
@@ -96,6 +102,11 @@ def undisclosed_dependencies(answer: str) -> list[str]:
     for path in set(re.findall(r"path:\s*\.?/?([\w./-]+\.ya?ml)", code)):
         if answer.count(path.split("/")[-1]) < 2:
             problems.append(f"included file not shown or explained: {path}")
+    if re.search(r"(?m)^\s*develop:\s*$", code) and re.search(r"(?m)^\s*watch:\s*$", code) \
+            and not re.search(r"--watch|docker compose watch", answer):
+        problems.append("develop.watch shown but never says to run with --watch")
+    if re.search(r"(?m)^\s+profiles:", code) and "--profile" not in answer:
+        problems.append("profiles shown but never says to run with --profile")
     return problems
 
 
@@ -123,7 +134,9 @@ def run_case(chain, judge_llm, case: dict) -> dict:
         row["missing_keywords"] = check_includes(answer, case["must_include"])
         # Regex checks for structure that substrings can't express, e.g. "a redis service is defined"
         row["missing_keywords"] += [f"/{p}/" for p in case.get("must_match", []) if not re.search(p, answer)]
-        row["false_refusal"] = bool(HARD_REFUSAL_RE.search(answer))
+        # On a "partial" case, "I don't have enough information to answer this completely" is the honest
+        # opening the prompt asks for - as long as it then delivers what the docs do cover (must_include)
+        row["false_refusal"] = bool(HARD_REFUSAL_RE.search(answer)) and not case.get("partial")
         row["invented_code"] = invented_code_lines(answer, docs)
         row["undisclosed_deps"] = undisclosed_dependencies(answer)
         row["passed"] = (row["retrieval_hit"] and not row["missing_keywords"] and not row["false_refusal"]

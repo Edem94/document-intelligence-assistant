@@ -82,6 +82,25 @@ def fuse_results(results, k):
     return [docs[c] for c in picked[:k]]
 
 
+def add_variable_definitions(vector_store, docs: list[Document]) -> dict:
+    """For each ${VAR} used in a chunk, find the chunk in the same file that sets it (e.g. a .env with VAR=...).
+
+    Without this the model sees `ports: - "${APP_PORT}:5000"` but not the .env defining APP_PORT,
+    which sits a few chunks earlier in the tutorial - and then tells the user the docs don't define it.
+    """
+    found_defs = {}
+    for doc in docs:
+        source = doc.metadata["source"]
+        for var in set(re.findall(r"\$\{(\w+)", doc.page_content)):
+            # "$contains" narrows it down; the regex skips lines like REDIS_HOST=${REDIS_HOST} that only use it
+            hits = vector_store.get(where={"source": source}, where_document={"$contains": f"{var}="})
+            for text, meta in zip(hits["documents"], hits["metadatas"]):
+                if re.search(rf"(?m)^\s*{var}=(?!\$\{{)", text):
+                    found_defs[(source, meta["chunk_index"])] = Document(page_content=text, metadata=meta)
+                    break
+    return found_defs
+
+
 def expand_neighbors(vector_store, docs: list[Document]) -> list[Document]:
     """Add the chunk before and after each selected chunk, then put each file's chunks back in reading order.
 
@@ -96,6 +115,8 @@ def expand_neighbors(vector_store, docs: list[Document]) -> list[Document]:
         found = vector_store.get(where={"$and": [{"source": source}, {"chunk_index": {"$in": [index - 1, index + 1]}}]})
         for text, meta in zip(found["documents"], found["metadatas"]):
             chosen.setdefault((meta["source"], meta["chunk_index"]), Document(page_content=text, metadata=meta))
+    for key, doc in add_variable_definitions(vector_store, list(chosen.values())).items():
+        chosen.setdefault(key, doc)
     # Files in order of their best-ranked chunk; chunks within a file in document order
     file_rank = {}
     for d in docs:

@@ -23,12 +23,21 @@ Rules:
 - Include commands or config from the context when they help, in fenced code blocks with a language tag.
   Copy each example verbatim from ONE source. Never merge examples from different sources or change
   their values - invalid config is worse than none. Prefer the most complete, self-contained example.
-- For "how do I define/create/set up" questions, lead with the most complete working example in the context.
-- Dependencies: after EACH code example, check whether it (a) uses ${{VARIABLES}}, (b) points to another file
-  (include, env_file, extends, a build context with a Dockerfile), or (c) references a service it doesn't define
-  (e.g. under depends_on). If so, add a line starting with "**Requires:**" naming each one, and show its
-  definition from the context (e.g. the .env file or the included file). If the definition isn't in the
-  context, say so instead of inventing it.
+- For "how do I define/create/set up" questions, lead with the most self-contained working example in the
+  context: ONE file that itself defines every service it uses. Prefer it over examples that pull services
+  from other files (include, extends); mention those only afterwards as an option.
+- After EACH config example, add a "**Requires:**" list. Go through these checks in order and include
+  every item that applies (skip the list only if none apply):
+  1. Every ${{VARIABLE}} in the example, by name, and where it is set - show the .env file if it is in
+     the context, otherwise say the values aren't shown in the docs.
+  2. Every other file it needs: a Dockerfile for `build:`, included files, `env_file`, files named in
+     watch rules - show them if they are in the context.
+  3. Services it references (e.g. under depends_on) but does not define itself. Never list a service
+     that the example defines.
+  4. The run command, with any flag a feature needs to take effect (`develop: watch` needs
+     `docker compose up --watch`; service `profiles` need `--profile <name>`). A plain command that
+     silently ignores part of the config is a wrong answer.
+  If something isn't in the context, say so instead of inventing it.
 - Use Markdown, no top-level heading. Do not list sources at the end - they are shown separately.
 
 Context:
