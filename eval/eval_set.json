@@ -75,6 +75,21 @@
     "notes": "Only partly covered: the docs explain Pods are replaced via controllers, not restarted. A good answer says so up front and does not invent kubectl commands that aren't in the docs."
   },
   {
+    "id": "k8s-start-local-cluster",
+    "question": "How do I start Kubernetes?",
+    "expected_sources": ["k8s_minikube_start_minikube.html", "Hello_Minikube_ Kubernetes.html", "k8s_install_tools.html"],
+    "must_include": ["minikube start", "kubectl"],
+    "answerable": true,
+    "notes": "Was answered 'I don't have enough information' before the minikube/install-tools pages were added (only the cluster-admin overview existed). A good answer starts a local cluster with minikube and checks it with kubectl."
+  },
+  {
+    "id": "k8s-install-tools",
+    "question": "Which tools do I need to run Kubernetes on my own computer?",
+    "expected_sources": ["k8s_install_tools.html"],
+    "must_include": ["kubectl", ["kind", "minikube"]],
+    "answerable": true
+  },
+  {
     "id": "k8s-hybrid-cluster",
     "question": "Can a single Kubernetes cluster span on-premises and cloud machines?",
     "expected_sources": ["kubernetes_cluster_administration.md"],

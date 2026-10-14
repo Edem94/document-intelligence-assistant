@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import shutil
@@ -54,7 +55,47 @@ def load_text(path: str, filename: str) -> list[Document]:
     return [Document(page_content=text, metadata={"source": filename, "page": 1})] if text.strip() else []
 
 
-LOADERS = {".pdf": load_pdf, ".html": load_html, ".htm": load_html, ".md": load_text, ".txt": load_text}
+# [text](url), ![alt](img.png), with an optional "title" - links are resolved before chunking
+MD_LINK_RE = re.compile(r'(!?)\[([^\]]*)\]\(\s*<?([^)\s>]*)>?(?:\s+"[^"]*")?\s*\)')
+
+
+def resolve_markdown_links(text: str, site: str | None) -> str:
+    """Make every link in the text one that works for the reader, or drop it to plain text.
+
+    Docs written for a website use links like (/docs/setup/). Copied into an answer as-is, the UI
+    resolves them against this app (localhost:8000/docs/setup/ -> 404). Root-relative links get the
+    site's domain; repo-relative ones (build-artifacts.md, ../includes/x.md) and #anchors have no
+    reliable public URL, so only their text is kept. Images are dropped. Code blocks are left alone.
+    """
+    def fix(match):
+        is_image, label, url = match.groups()
+        if is_image:
+            return ""
+        if url.startswith(("http://", "https://")):
+            return match.group(0)
+        if site and url.startswith("/") and not url.startswith("//"):
+            return f"[{label}]({site.rstrip('/')}{url})"
+        return label
+
+    parts = re.split(r"(```.*?```)", text, flags=re.DOTALL)
+    return "".join(part if part.startswith("```") else MD_LINK_RE.sub(fix, part) for part in parts)
+
+
+def load_markdown(path: str, filename: str) -> list[Document]:
+    sites_file = os.path.join(os.path.dirname(path), "sites.json")
+    sites = {}
+    if os.path.exists(sites_file):
+        with open(sites_file, encoding="utf-8") as f:
+            sites = json.load(f)
+    if filename not in sites:
+        print(f"  NOTE: {filename} has no entry in sites.json - its root-relative links become plain text")
+    docs = load_text(path, filename)
+    for doc in docs:
+        doc.page_content = resolve_markdown_links(doc.page_content, sites.get(filename))
+    return docs
+
+
+LOADERS = {".pdf": load_pdf, ".html": load_html, ".htm": load_html, ".md": load_markdown, ".txt": load_text}
 
 
 def load_documents(directory_path: str) -> list[Document]:

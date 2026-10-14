@@ -22,6 +22,21 @@ async function askQuestion(question) {
 function renderAnswer(markdown) {
   // Answers are Markdown from an LLM: sanitize before inserting as HTML
   answerBox.innerHTML = DOMPurify.sanitize(marked.parse(markdown));
+  fixLinks(answerBox);
+}
+
+function fixLinks(container) {
+  // Relative links from the docs (e.g. /docs/setup/) would resolve against this app and 404:
+  // show them as plain text. Real links open in a new tab so the answer isn't lost.
+  container.querySelectorAll("a").forEach((link) => {
+    const href = link.getAttribute("href") || "";
+    if (!/^https?:\/\//i.test(href)) {
+      link.replaceWith(document.createTextNode(link.textContent));
+      return;
+    }
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+  });
 }
 
 function renderSources(sources) {

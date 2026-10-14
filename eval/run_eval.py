@@ -110,6 +110,12 @@ def undisclosed_dependencies(answer: str) -> list[str]:
     return problems
 
 
+def broken_links(answer: str) -> list[str]:
+    """Markdown links that aren't absolute http(s) URLs - in the UI they resolve against this app and 404."""
+    prose = re.sub(r"```.*?```", "", answer, flags=re.DOTALL)
+    return [url for url in re.findall(r"\]\(\s*<?([^)\s>]*)", prose) if not url.startswith(("http://", "https://"))]
+
+
 def judge(judge_llm, case: dict, answer: str, docs) -> dict:
     reply = judge_llm.invoke(JUDGE_PROMPT.format(question=case["question"], context=format_docs(docs), answer=answer))
     match = re.search(r"\{.*\}", reply.content, re.DOTALL)
@@ -127,7 +133,7 @@ def run_case(chain, judge_llm, case: dict) -> dict:
     retrieved = sorted({d.metadata.get("source", "unknown") for d in docs})
 
     row = {"id": case["id"], "answerable": case["answerable"], "latency_s": round(latency, 2),
-           "retrieved_sources": retrieved, "answer": answer}
+           "retrieved_sources": retrieved, "answer": answer, "broken_links": broken_links(answer)}
     if case["answerable"]:
         expected = case["expected_sources"]
         row["retrieval_hit"] = any(s in retrieved for s in expected)
@@ -140,10 +146,10 @@ def run_case(chain, judge_llm, case: dict) -> dict:
         row["invented_code"] = invented_code_lines(answer, docs)
         row["undisclosed_deps"] = undisclosed_dependencies(answer)
         row["passed"] = (row["retrieval_hit"] and not row["missing_keywords"] and not row["false_refusal"]
-                         and not row["invented_code"] and not row["undisclosed_deps"])
+                         and not row["invented_code"] and not row["undisclosed_deps"] and not row["broken_links"])
     else:
         row["refused"] = bool(REFUSAL_RE.search(answer))
-        row["passed"] = row["refused"]
+        row["passed"] = row["refused"] and not row["broken_links"]
     if judge_llm and case["answerable"]:
         row["judge"] = judge(judge_llm, case, answer, docs)
     return row
@@ -163,6 +169,7 @@ def summarize(rows: list[dict]) -> dict:
         "false_refusals": sum(r["false_refusal"] for r in answerable),
         "answers_with_invented_code": sum(bool(r["invented_code"]) for r in answerable),
         "answers_with_undisclosed_deps": sum(bool(r["undisclosed_deps"]) for r in answerable),
+        "answers_with_broken_links": sum(bool(r["broken_links"]) for r in rows),
         "out_of_scope_refusal_rate_pct": pct(sum(r["refused"] for r in oos), len(oos)),
         "avg_faithfulness": avg("faithfulness"),
         "avg_completeness": avg("completeness"),
@@ -179,6 +186,8 @@ def print_report(rows: list[dict], summary: dict):
             problems.append("missing: " + ", ".join(r["missing_keywords"]))
         if r.get("false_refusal"):
             problems.append("refused an answerable question")
+        if r["broken_links"]:
+            problems.append("broken links: " + ", ".join(r["broken_links"][:3]))
         if r.get("undisclosed_deps"):
             problems.append("; ".join(r["undisclosed_deps"]))
         if r.get("invented_code"):
