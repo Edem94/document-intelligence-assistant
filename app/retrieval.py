@@ -101,6 +101,35 @@ def add_variable_definitions(vector_store, docs: list[Document]) -> dict:
     return found_defs
 
 
+PLATFORMS = ["Windows", "macOS", "Linux"]
+
+
+def add_platform_variants(vector_store, docs: list[Document]) -> dict:
+    """If a chunk gives install steps for one OS, fetch the install steps for the other OSes from the same file.
+
+    Install pages list every OS one after another (minikube: ~12 chunks of Linux variants before
+    macOS and Windows), so retrieval only ever sees the first OS and the answer silently assumes it.
+    """
+    found, done_sources = {}, set()
+    for doc in docs:
+        source, text = doc.metadata["source"], doc.page_content
+        mentioned = [p for p in PLATFORMS if p in text]
+        if source in done_sources or not mentioned or not re.search(r"\binstall", text, re.IGNORECASE):
+            continue
+        done_sources.add(source)
+        for platform in PLATFORMS:
+            if platform in mentioned:
+                continue
+            # The FIRST chunk mentioning the OS + "install": pages lead each OS with the simplest option
+            # (a package manager like winget/brew); later chunks are alternatives and PATH fiddling
+            hits = vector_store.get(where={"source": source},
+                                    where_document={"$and": [{"$contains": platform}, {"$contains": "install"}]})
+            if hits["ids"]:
+                text, meta = min(zip(hits["documents"], hits["metadatas"]), key=lambda h: h[1]["chunk_index"])
+                found[(source, meta["chunk_index"])] = Document(page_content=text, metadata=meta)
+    return found
+
+
 def expand_neighbors(vector_store, docs: list[Document]) -> list[Document]:
     """Add the chunk before and after each selected chunk, then put each file's chunks back in reading order.
 
@@ -116,6 +145,8 @@ def expand_neighbors(vector_store, docs: list[Document]) -> list[Document]:
         for text, meta in zip(found["documents"], found["metadatas"]):
             chosen.setdefault((meta["source"], meta["chunk_index"]), Document(page_content=text, metadata=meta))
     for key, doc in add_variable_definitions(vector_store, list(chosen.values())).items():
+        chosen.setdefault(key, doc)
+    for key, doc in add_platform_variants(vector_store, list(chosen.values())).items():
         chosen.setdefault(key, doc)
     # Files in order of their best-ranked chunk; chunks within a file in document order
     file_rank = {}

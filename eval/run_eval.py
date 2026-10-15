@@ -6,7 +6,8 @@
 #
 # Case fields: question, expected_sources (retrieval hit = any one retrieved), answerable,
 # must_include (case-insensitive substrings; a nested list means "any of these"),
-# must_match (optional regexes on the answer), partial (docs only partly answer it, so an
+# must_match (optional regexes on the answer), code_order (commands that must appear in the
+# answer's code blocks in this order, e.g. install -> start -> verify), partial (docs only partly answer it, so an
 # "I don't have enough information to answer completely" opening is fine), notes.
 
 import argparse
@@ -110,6 +111,28 @@ def undisclosed_dependencies(answer: str) -> list[str]:
     return problems
 
 
+def code_order_problems(answer: str, steps: list) -> list[str]:
+    """Check that the answer's commands appear in the order a user must run them.
+
+    `steps` is a list of items (a string, or a list of alternatives); each must occur inside the
+    answer's code blocks, and the first occurrence of each must come after the previous step's.
+    Only code is checked, so a summary sentence like "run `minikube start`" up front is fine.
+    """
+    code = "\n".join(re.findall(r"```[^\n]*\n(.*?)```", answer, re.DOTALL)).lower()
+    problems, last_pos, last_name = [], -1, None
+    for step in steps:
+        options = step if isinstance(step, list) else [step]
+        positions = [code.find(opt.lower()) for opt in options if opt.lower() in code]
+        name = " | ".join(options)
+        if not positions:
+            problems.append(f"step missing from code: {name}")
+            continue
+        if min(positions) < last_pos:
+            problems.append(f"'{name}' comes before '{last_name}'")
+        last_pos, last_name = min(positions), name
+    return problems
+
+
 def broken_links(answer: str) -> list[str]:
     """Markdown links that aren't absolute http(s) URLs - in the UI they resolve against this app and 404."""
     prose = re.sub(r"```.*?```", "", answer, flags=re.DOTALL)
@@ -140,6 +163,7 @@ def run_case(chain, judge_llm, case: dict) -> dict:
         row["missing_keywords"] = check_includes(answer, case["must_include"])
         # Regex checks for structure that substrings can't express, e.g. "a redis service is defined"
         row["missing_keywords"] += [f"/{p}/" for p in case.get("must_match", []) if not re.search(p, answer)]
+        row["missing_keywords"] += code_order_problems(answer, case.get("code_order", []))
         # On a "partial" case, "I don't have enough information to answer this completely" is the honest
         # opening the prompt asks for - as long as it then delivers what the docs do cover (must_include)
         row["false_refusal"] = bool(HARD_REFUSAL_RE.search(answer)) and not case.get("partial")
