@@ -45,6 +45,15 @@
     "answerable": true
   },
   {
+    "id": "docker-write-dockerfile",
+    "question": "How can I write Dockerfile to containerize web application?",
+    "expected_sources": ["Dockerfile_overview.html", "docker_building_best practices.html", "docker_build_context.html"],
+    "must_include": ["FROM", "COPY", "CMD", ".dockerignore", "docker build"],
+    "code_order": ["from ", "docker build", ["docker run", "docker compose up"]],
+    "answerable": true,
+    "notes": "Before the Dockerfile overview / build context / best-practices pages were added, the answer was just the Compose quickstart's Flask Dockerfile: no general structure, no .dockerignore, no build step. A good answer outlines the instructions (base image, deps, copy, expose, start), shows an example, then docker build -> docker run."
+  },
+  {
     "id": "container-what",
     "question": "What is a container and why would I use one?",
     "expected_sources": ["docker_containers.html"],

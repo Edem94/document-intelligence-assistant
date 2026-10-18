@@ -70,10 +70,12 @@ def invented_code_lines(answer: str, docs) -> list[str]:
     tends to wave through. Indentation is ignored. Config lines must match a whole context line
     (so `image: redis` doesn't pass because `image: redis:alpine` exists); shell commands only need
     to appear somewhere, since docs often mention them inline without a "$ " prompt. Lines that are
-    only an elision marker ("# ...", "...") are allowed.
+    only an elision marker ("# ...", "...") are allowed. A shell command may also differ from a docs
+    command in placeholder values only (image name/tag, port numbers) - see command_shape().
     """
     context_text = "\n".join(d.page_content for d in docs)
     context_lines = {line.strip() for line in context_text.splitlines()}
+    context_shapes = {command_shape(line.removeprefix("$ ")) for line in context_lines if line}
     invented = []
     for block in re.findall(r"```[^\n]*\n(.*?)```", answer, re.DOTALL):
         for line in (l.strip() for l in block.splitlines()):
@@ -81,10 +83,27 @@ def invented_code_lines(answer: str, docs) -> list[str]:
                 continue
             if re.fullmatch(r"(#|//)?\s*\.\.\..*", line):  # an explicit "# ..." elision isn't invented config
                 continue
-            if line.startswith("$ ") and line[2:] in context_text:
+            # Shell commands, with or without a "$ " prompt: the docs often write "$ docker compose up"
+            # (or inline in a sentence, without a prompt). "Command-like" = starts with a lowercase word
+            # and a space, so YAML keys ("image: x") and Dockerfile lines ("EXPOSE 80") never match here.
+            command = line.removeprefix("$ ")
+            is_command = line.startswith("$ ") or re.match(r"[a-z][\w.-]* ", command)
+            if f"$ {command}" in context_lines or (is_command and command in context_text):
+                continue
+            if is_command and command_shape(command) in context_shapes:
                 continue
             invented.append(line)
     return invented
+
+
+def command_shape(command: str) -> str:
+    """A command with its placeholder values blanked: `docker run -p 127.0.0.1:5000:5000 my-app:latest`
+    and `docker run -p 127.0.0.1:8000:8000 test:latest` have the same shape. Commands, subcommands and
+    flags are kept, so adding a flag or a different command still counts as invented."""
+    command = re.sub(r"(-t|--tag)\s+\S+", r"\1 IMG", command.strip())
+    command = re.sub(r"\d+", "N", command)
+    command = re.sub(r"\b[\w./-]+:[\w.-]+\b", "IMG", command)  # image:tag (also N.N.N.N:N:N port maps)
+    return re.sub(r"\s+", " ", command)
 
 
 def undisclosed_dependencies(answer: str) -> list[str]:
@@ -133,6 +152,16 @@ def code_order_problems(answer: str, steps: list) -> list[str]:
     return problems
 
 
+# Wording that exposes the RAG plumbing to the user ("The context provides..."). Docker's own term
+# "build context" is fine, so only phrasings that refer to the retrieved text are matched.
+CONTEXT_LEAK_RE = re.compile(
+    r"\b(provided|given|retrieved) context\b|"
+    r"\bthe context (provides|provided|covers|includes|contains|mentions|shows|only|does not|doesn't)\b|"
+    r"\b(in|from) the context\b",
+    re.IGNORECASE,
+)
+
+
 def broken_links(answer: str) -> list[str]:
     """Markdown links that aren't absolute http(s) URLs - in the UI they resolve against this app and 404."""
     prose = re.sub(r"```.*?```", "", answer, flags=re.DOTALL)
@@ -156,7 +185,8 @@ def run_case(chain, judge_llm, case: dict) -> dict:
     retrieved = sorted({d.metadata.get("source", "unknown") for d in docs})
 
     row = {"id": case["id"], "answerable": case["answerable"], "latency_s": round(latency, 2),
-           "retrieved_sources": retrieved, "answer": answer, "broken_links": broken_links(answer)}
+           "retrieved_sources": retrieved, "answer": answer, "broken_links": broken_links(answer),
+           "context_leak": bool(CONTEXT_LEAK_RE.search(answer))}
     if case["answerable"]:
         expected = case["expected_sources"]
         row["retrieval_hit"] = any(s in retrieved for s in expected)
@@ -170,10 +200,11 @@ def run_case(chain, judge_llm, case: dict) -> dict:
         row["invented_code"] = invented_code_lines(answer, docs)
         row["undisclosed_deps"] = undisclosed_dependencies(answer)
         row["passed"] = (row["retrieval_hit"] and not row["missing_keywords"] and not row["false_refusal"]
-                         and not row["invented_code"] and not row["undisclosed_deps"] and not row["broken_links"])
+                         and not row["invented_code"] and not row["undisclosed_deps"] and not row["broken_links"]
+                         and not row["context_leak"])
     else:
         row["refused"] = bool(REFUSAL_RE.search(answer))
-        row["passed"] = row["refused"] and not row["broken_links"]
+        row["passed"] = row["refused"] and not row["broken_links"] and not row["context_leak"]
     if judge_llm and case["answerable"]:
         row["judge"] = judge(judge_llm, case, answer, docs)
     return row
@@ -194,6 +225,7 @@ def summarize(rows: list[dict]) -> dict:
         "answers_with_invented_code": sum(bool(r["invented_code"]) for r in answerable),
         "answers_with_undisclosed_deps": sum(bool(r["undisclosed_deps"]) for r in answerable),
         "answers_with_broken_links": sum(bool(r["broken_links"]) for r in rows),
+        "answers_mentioning_context": sum(r["context_leak"] for r in rows),
         "out_of_scope_refusal_rate_pct": pct(sum(r["refused"] for r in oos), len(oos)),
         "avg_faithfulness": avg("faithfulness"),
         "avg_completeness": avg("completeness"),
@@ -210,6 +242,8 @@ def print_report(rows: list[dict], summary: dict):
             problems.append("missing: " + ", ".join(r["missing_keywords"]))
         if r.get("false_refusal"):
             problems.append("refused an answerable question")
+        if r["context_leak"]:
+            problems.append('says "the context" instead of "the docs"')
         if r["broken_links"]:
             problems.append("broken links: " + ", ".join(r["broken_links"][:3]))
         if r.get("undisclosed_deps"):

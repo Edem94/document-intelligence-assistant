@@ -11,7 +11,7 @@ logger = logging.getLogger("uvicorn.error")
 # Query rewriting ("code HyDE"): chunks that are mostly YAML/commands embed far from a plain-English
 # question, but close to a similar snippet. So we ask the LLM for the snippet the answer would
 # contain and search with it alongside the original question.
-REWRITE_TEMPLATE = """Write the minimal config file or shell commands that would appear in documentation answering this DevOps question. Output only the raw snippet, no explanation, no code fences. If the question isn't about config or commands, write one short sentence a doc page would use to answer it.
+REWRITE_TEMPLATE = """Write the minimal config file or shell commands that would appear in documentation answering this DevOps question. If it is a config file, also add the shell commands that build/run/use it. Output only the raw snippet, no explanation, no code fences. If the question isn't about config or commands, write one short sentence a doc page would use to answer it.
 
 Question: {question}"""
 
@@ -27,11 +27,12 @@ Candidates:
 Pick up to {k} candidates that best help answer the question. Prefer:
 - excerpts that directly answer it over loosely related background or command reference tables
 - complete, self-contained examples (e.g. a full config file defining every service it uses) over fragments
+- for a config file you pick, also the excerpt showing the commands that build/run/use it, if one is listed
 Reply with only the candidate numbers, most useful first, comma-separated (e.g. 4, 1, 9)."""
 
-TOP_K = 6             # chunks chosen by the reranker (before neighbour expansion)
-FETCH_PER_QUERY = 10  # candidates per query before fusion
-RERANK_POOL = 20      # fused candidates shown to the reranker
+TOP_K = 8             # chunks chosen by the reranker (before neighbour expansion)
+FETCH_PER_QUERY = 15  # candidates per query before fusion
+RERANK_POOL = 30      # fused candidates shown to the reranker (20 dropped good examples once the corpus grew)
 PREVIEW_CHARS = 600   # how much of each candidate the reranker sees
 
 

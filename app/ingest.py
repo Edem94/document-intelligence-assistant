@@ -9,7 +9,7 @@ from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
-from app.config import CHROMA_DIR, EMBEDDING_MODEL, RAW_DOCS_DIR, CHUNK_SIZE, CHUNK_OVERLAP
+from app.config import CHROMA_DIR, EMBEDDING_MODEL, RAW_DOCS_DIR, CHUNK_SIZE, CHUNK_OVERLAP, MIN_CHUNK_CHARS
 
 
 def load_pdf(path: str, filename: str) -> list[Document]:
@@ -117,6 +117,8 @@ def load_and_split_documents():
 
     splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
     chunks = splitter.split_documents(documents)
+    # Skip near-empty chunks: a page title + "Table of contents", or a lone "### Options" heading
+    chunks = [c for c in chunks if len(c.page_content.strip()) >= MIN_CHUNK_CHARS]
     # Position of each chunk within its file, so retrieval can pull in neighbouring chunks
     # (e.g. the "Step 2: ..." intro right before a YAML example, or the file an example includes)
     counters = defaultdict(int)
