@@ -1,25 +1,32 @@
-**/.classpath
-**/.dockerignore
-**/.env
-**/.git
-**/.gitignore
-**/.project
-**/.settings
-**/.toolstarget
-**/.vs
-**/.vscode
-**/*.*proj.user
-**/*.dbmdl
-**/*.jfm
-**/bin
-**/charts
-**/docker-compose*
-**/compose*
-**/Dockerfile*
-**/node_modules
-**/npm-debug.log
-**/obj
-**/secrets.dev.yaml
-**/values.dev.yaml
-LICENSE
+# Keep the build context small and secrets out of the image.
+# Patterns are anchored to the project root on purpose: a pattern like **/Dockerfile* would also
+# drop data/raw_docs/Dockerfile_overview.html and silently remove it from the search index.
+
+# Secrets
+.env
+.env.*
+
+# Local environment and build output - the image builds its own venv and Chroma index
+venv/
+.venv/
+chroma_db/
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+
+# Not needed at run time
+.git/
+.gitignore
+.vscode/
+.idea/
+.claude/
+CLAUDE.md
 README.md
+tests/
+eval/
+requirements.txt
+
+# Docker files themselves
+Dockerfile
+.dockerignore
+compose.yaml
