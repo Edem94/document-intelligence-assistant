@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Document Intelligence Assistant</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <h1>Document Intelligence Assistant</h1>
+  <p class="muted">Ask questions about the indexed DevOps docs (Docker, Kubernetes, Azure Pipelines, Cloud Run, GitHub).
+    API docs at <a href="/docs">/docs</a>.</p>
+
+  <form id="ask-form">
+    <textarea id="question" rows="3" minlength="3" maxlength="1000" required
+      placeholder="e.g. How do I define a multi-container app with Docker Compose?"></textarea>
+    <div class="actions">
+      <button type="submit" id="ask-button">Ask</button>
+      <span class="muted hint">Ctrl+Enter to send</span>
+    </div>
+  </form>
+
+  <div id="answer" hidden></div>
+  <div id="sources" class="muted"></div>
+</body>
+</html>

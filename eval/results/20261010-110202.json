@@ -1,0 +1,431 @@
+{
+  "summary": {
+    "cases": 21,
+    "pass_rate_pct": 95.2,
+    "retrieval_hit_rate_pct": 100.0,
+    "keyword_pass_rate_pct": 100.0,
+    "false_refusals": 0,
+    "answers_with_invented_code": 0,
+    "answers_with_undisclosed_deps": 1,
+    "out_of_scope_refusal_rate_pct": 100.0,
+    "avg_faithfulness": 4.95,
+    "avg_completeness": 5.0,
+    "avg_latency_s": 5.35
+  },
+  "results": [
+    {
+      "id": "compose-define-multi",
+      "answerable": true,
+      "latency_s": 9.39,
+      "retrieved_sources": [
+        "Docker_Compose_multi-container_apps.html",
+        "docker_compose.html",
+        "docker_compose_quickstart.html"
+      ],
+      "answer": "You define a multi-container app with Docker Compose by creating a `compose.yaml` file that declares all your services, their images or build contexts, ports, environment variables, volumes, and dependencies in a single YAML file. Then run `docker compose up` to start everything.\n\nHere's a complete, self-contained example with a web service and Redis:\n\n```yaml\nservices:\n  web:\n    build: .\n    ports:\n      - \"${APP_PORT}:5000\"\n    environment:\n      - REDIS_HOST=${REDIS_HOST}\n      - REDIS_PORT=${REDIS_PORT}\n    depends_on:\n      redis:\n        condition: service_healthy\n    develop:\n      watch:\n        - action: sync+restart\n          path: .\n          target: /code\n        - action: rebuild\n          path: requirements.txt\n\n  redis:\n    image: redis:alpine\n    volumes:\n      - redis-data:/data\n    healthcheck:\n      test: [\"CMD\", \"redis-cli\", \"ping\"]\n      interval: 5s\n      timeout: 3s\n      retries: 5\n      start_period: 10s\n\nvolumes:\n  redis-data:\n```\n\n**Requires:**\n- `${APP_PORT}`, `${REDIS_HOST}`, `${REDIS_PORT}` — set in `.env` file with values:\n  ```\n  APP_PORT=8000\n  REDIS_HOST=redis\n  REDIS_PORT=6379\n  ```\n- A `Dockerfile` in the current directory (the `build: .` references it)\n- `docker compose up --watch` command (the `develop.watch` feature requires the `--watch` flag)\n\nThe Compose file is declarative — you define it once and run `docker compose up`. If you make changes, run the command again and Compose will reconcile them intelligently. The `depends_on` with `service_healthy` ensures the web service waits for Redis to be ready before starting, and the named volume `redis-data` persists data between container restarts.",
+      "retrieval_hit": true,
+      "missing_keywords": [],
+      "false_refusal": false,
+      "invented_code": [],
+      "undisclosed_deps": [],
+      "passed": true,
+      "judge": {
+        "faithfulness": 4,
+        "completeness": 5,
+        "unsupported_claims": [
+          "docker compose up --watch command (the develop.watch feature requires the --watch flag) - The context shows --watch is used with compose up, but doesn't explicitly state it's required for the develop.watch feature to work"
+        ]
+      }
+    },
+    {
+      "id": "compose-healthcheck",
+      "answerable": true,
+      "latency_s": 6.34,
+      "retrieved_sources": [
+        "docker_compose_quickstart.html"
+      ],
+      "answer": "Use `depends_on` with a health check condition. Add a `healthcheck` block to the Redis service and configure the web service to wait for it:\n\n```yaml\nservices:\n  web:\n    build: .\n    ports:\n      - \"${APP_PORT}:5000\"\n    environment:\n      - REDIS_HOST=${REDIS_HOST}\n      - REDIS_PORT=${REDIS_PORT}\n    depends_on:\n      redis:\n        condition: service_healthy\n\n  redis:\n    image: redis:alpine\n    healthcheck:\n      test: [\"CMD\", \"redis-cli\", \"ping\"]\n      interval: 5s\n      timeout: 3s\n      retries: 5\n      start_period: 10s\n```\n\n**Requires:**\n- The `redis` service defined in the same Compose file\n- Run command: `docker compose up` (the default behavior respects `depends_on` conditions)\n\nThe health check works by:\n- `test`: Runs `redis-cli ping` inside the container; Redis responds with PONG if healthy\n- `start_period: 10s`: Gives Redis 10 seconds to initialize before checks begin\n- `interval: 5s`: Checks every 5 seconds after the start period\n- `timeout: 3s`: Allows 3 seconds per check before treating it as a failure\n- `retries: 5`: Allows up to 5 consecutive failures (up to 25 seconds total) before marking unhealthy\n\nCompose will not start the web service until Redis reports healthy status.",
+      "retrieval_hit": true,
+      "missing_keywords": [],
+      "false_refusal": false,
+      "invented_code": [],
+      "undisclosed_deps": [
+        "unexplained variables: APP_PORT, REDIS_HOST, REDIS_PORT"
+      ],
+      "passed": false,
+      "judge": {
+        "faithfulness": 5,
+        "completeness": 5,
+        "unsupported_claims": []
+      }
+    },
+    {
+      "id": "compose-persist-data",
+      "answerable": true,
+      "latency_s": 6.16,
+      "retrieved_sources": [
+        "docker_compose_quickstart.html"
+      ],
+      "answer": "Use a named volume to persist Redis data across `docker compose down` and `docker compose up` cycles.\n\nUpdate your `compose.yaml` to mount a named volume at the path where Redis stores its data:\n\n```yaml\nservices:\n  web:\n    build: .\n    ports:\n      - \"${APP_PORT}:5000\"\n    environment:\n      - REDIS_HOST=${REDIS_HOST}\n      - REDIS_PORT=${REDIS_PORT}\n    depends_on:\n      redis:\n        condition: service_healthy\n    develop:\n      watch:\n        - action: sync+restart\n          path: .\n          target: /code\n        - action: rebuild\n          path: requirements.txt\n\n  redis:\n    image: redis:alpine\n    volumes:\n      - redis-data:/data\n    healthcheck:\n      test: [\"CMD\", \"redis-cli\", \"ping\"]\n      interval: 5s\n      timeout: 3s\n      retries: 5\n      start_period: 10s\n\nvolumes:\n  redis-data:\n```\n\n**Requires:**\n- `${APP_PORT}`, `${REDIS_HOST}`, `${REDIS_PORT}` set in `.env` file\n- Run with `docker compose up --watch` to enable the watch feature\n\nThe `redis-data:/data` volume mounts the named volume at `/data`, where Redis writes its data files. The top-level `volumes:` key registers it with Docker so it persists between `compose down` and `compose up` cycles.\n\nTo verify persistence works, run `docker compose up --watch`, refresh http://localhost:8000 a few times to build up a count, then run `docker compose down` followed by `docker compose up --watch`. The counter will continue from where it left off.\n\nTo intentionally reset the data, use `docker compose down -v`. The `-v` flag removes named volumes along with the containers and permanently deletes the stored data.",
+      "retrieval_hit": true,
+      "missing_keywords": [],
+      "false_refusal": false,
+      "invented_code": [],
+      "undisclosed_deps": [],
+      "passed": true,
+      "judge": {
+        "faithfulness": 5,
+        "completeness": 5,
+        "unsupported_claims": []
+      }
+    },
+    {
+      "id": "compose-watch-live-updates",
+      "answerable": true,
+      "latency_s": 6.84,
+      "retrieved_sources": [
+        "docker_compose_quickstart.html"
+      ],
+      "answer": "Use Compose Watch by adding a `develop.watch` block to your service and running `docker compose up --watch`.\n\nHere's the configuration:\n\n```yaml\nservices:\n  web:\n    build: .\n    ports:\n      - \"${APP_PORT}:5000\"\n    environment:\n      - REDIS_HOST=${REDIS_HOST}\n      - REDIS_PORT=${REDIS_PORT}\n    depends_on:\n      redis:\n        condition: service_healthy\n    develop:\n      watch:\n        - action: sync+restart\n          path: .\n          target: /code\n        - action: rebuild\n          path: requirements.txt\n\n  redis:\n    image: redis:alpine\n    healthcheck:\n      test: [\"CMD\", \"redis-cli\", \"ping\"]\n      interval: 5s\n      timeout: 3s\n      retries: 5\n      start_period: 10s\n```\n\n**Requires:**\n- `${APP_PORT}`, `${REDIS_HOST}`, `${REDIS_PORT}` — set in `.env` file with values: `APP_PORT=8000`, `REDIS_HOST=redis`, `REDIS_PORT=6379`\n- Run command: `docker compose up --watch` (the `--watch` flag is required for this feature to work)\n\nThe watch block defines two rules:\n- **sync+restart** on your project directory (`.`) copies changed files into `/code` inside the container and restarts it, so Flask reads the new code immediately.\n- **rebuild** on `requirements.txt` triggers a full image rebuild when you add dependencies, since installing packages requires rebuilding the image.\n\nWhen you save a file, Compose detects the change and syncs it automatically. Refresh your browser to see the updates without manual restart.",
+      "retrieval_hit": true,
+      "missing_keywords": [],
+      "false_refusal": false,
+      "invented_code": [],
+      "undisclosed_deps": [],
+      "passed": true,
+      "judge": {
+        "faithfulness": 5,
+        "completeness": 5,
+        "unsupported_claims": []
+      }
+    },
+    {
+      "id": "compose-multiple-files",
+      "answerable": true,
+      "latency_s": 5.96,
+      "retrieved_sources": [
+        "docker_compose.md",
+        "docker_compose_quickstart.html"
+      ],
+      "answer": "When you supply multiple `-f` configuration files, Compose combines them in the order you specify them, with **subsequent files overriding and adding to their predecessors**.\n\n```console\n$ docker compose -f compose.yaml -f compose.admin.yaml run backup_db\n```\n\nFor example, if `compose.yaml` defines:\n\n```yaml\nservices:\n  webapp:\n    image: examples/web\n    ports:\n      - \"8000:8000\"\n    volumes:\n      - \"/data\"\n```\n\nAnd `compose.admin.yaml` defines:\n\n```yaml\nservices:\n  webapp:\n    build: .\n    environment:\n      - DEBUG=1\n```\n\nThe final configuration merges both: `webapp` will have `build: .` and `environment: DEBUG=1` from the second file (overriding `image`), plus the `ports` and `volumes` from the first file (which weren't redefined).\n\n**Important:** All paths in the files are relative to the first configuration file specified with `-f`. You can override this base path using the `--project-directory` option.\n\nYou can also combine local files with remote sources (OCI artifacts or git repositories):\n\n```console\n$ docker compose -f https://github.com/user/repo.git -f compose.override.yaml up\n```",
+      "retrieval_hit": true,
+      "missing_keywords": [],
+      "false_refusal": false,
+      "invented_code": [],
+      "undisclosed_deps": [],
+      "passed": true,
+      "judge": {
+        "faithfulness": 5,
+        "completeness": 5,
+        "unsupported_claims": []
+      }
+    },
+    {
+      "id": "compose-vs-dockerfile",
+      "answerable": true,
+      "latency_s": 3.08,
+      "retrieved_sources": [
+        "Docker_Compose_multi-container_apps.html",
+        "docker_compose.html"
+      ],
+      "answer": "A Dockerfile provides instructions to build a container image, while a Compose file defines your running containers. Quite often, a Compose file references a Dockerfile to build an image to use for a particular service.\n\nIn other words:\n- **Dockerfile** = how to build an image\n- **Compose file** = how to run containers (and can reference Dockerfiles for building)",
+      "retrieval_hit": true,
+      "missing_keywords": [],
+      "false_refusal": false,
+      "invented_code": [],
+      "undisclosed_deps": [],
+      "passed": true,
+      "judge": {
+        "faithfulness": 5,
+        "completeness": 5,
+        "unsupported_claims": []
+      }
+    },
+    {
+      "id": "container-what",
+      "answerable": true,
+      "latency_s": 6.04,
+      "retrieved_sources": [
+        "Docker_Compose_multi-container_apps.html",
+        "Google_Cloud_Run_Docs.html",
+        "docker_containers.html"
+      ],
+      "answer": "A container is an isolated process that runs your application with all the files and dependencies it needs, completely separated from everything else on your machine.\n\nYou'd use containers because they solve critical problems in development and deployment:\n\n**Version consistency**: Containers ensure all developers, your CI/CD system, and production use the exact same versions of dependencies (Python, Node, databases, etc.). You don't have to install Node, Python, and PostgreSQL separately on each machine.\n\n**Isolation and security**: Each container runs independently with minimal influence on the host system or other containers, reducing security risks and preventing conflicts between different applications or their dependencies.\n\n**Portability**: A container that runs on your development machine works identically in a data center or cloud environment—no \"works on my machine\" problems.\n\n**Efficiency**: Unlike virtual machines (which run an entire operating system with its own kernel), containers share the same kernel, allowing you to run more applications on less infrastructure.\n\n**Independence**: Containers are independently managed, so deleting one won't affect others.\n\nThis is especially valuable for complex applications. For example, instead of installing a React frontend, Python API, and PostgreSQL database directly on your machine and managing version conflicts, you'd run each in its own container with guaranteed consistency across your entire team and production.",
+      "retrieval_hit": true,
+      "missing_keywords": [],
+      "false_refusal": false,
+      "invented_code": [],
+      "undisclosed_deps": [],
+      "passed": true,
+      "judge": {
+        "faithfulness": 5,
+        "completeness": 5,
+        "unsupported_claims": []
+      }
+    },
+    {
+      "id": "k8s-pod-what",
+      "answerable": true,
+      "latency_s": 5.28,
+      "retrieved_sources": [
+        "kubernetes_pods.md"
+      ],
+      "answer": "A Pod is the smallest deployable unit of computing that you can create and manage in Kubernetes. It is a group of one or more containers with shared storage and network resources, and a specification for how to run the containers.\n\nKey characteristics of Pods:\n\n- **Shared context**: A Pod's contents are always co-located and co-scheduled, running in a shared context of Linux namespaces, cgroups, and other isolation mechanisms.\n- **Networking**: Each Pod is assigned a unique IP address. All containers in a Pod share the network namespace, including the IP address and network ports. Containers within a Pod can communicate with one another using `localhost`.\n- **Storage**: Pods can specify shared storage volumes that all containers in the Pod can access, allowing them to share data and persist data if a container needs to be restarted.\n\n**Common usage patterns:**\n\n- **Single-container Pods**: The most common use case, where a Pod wraps a single container and Kubernetes manages the Pod rather than the container directly.\n- **Multi-container Pods**: A Pod can encapsulate multiple tightly coupled containers that need to work together and share resources, forming a single cohesive unit of service.\n\nA Pod can also contain init containers that run during Pod startup and ephemeral containers for debugging a running Pod.",
+      "retrieval_hit": true,
+      "missing_keywords": [],
+      "false_refusal": false,
+      "invented_code": [],
+      "undisclosed_deps": [],
+      "passed": true,
+      "judge": {
+        "faithfulness": 5,
+        "completeness": 5,
+        "unsupported_claims": []
+      }
+    },
+    {
+      "id": "k8s-static-pods",
+      "answerable": true,
+      "latency_s": 3.36,
+      "retrieved_sources": [
+        "kubernetes_pods.md"
+      ],
+      "answer": "Static Pods are managed directly by the kubelet daemon on a specific node, without the API server observing them. Unlike most Pods which are managed by the control plane (for example, by a Deployment), the kubelet directly supervises each static Pod and restarts it if it fails.\n\nStatic Pods are always bound to one kubelet on a specific node. The main use for static Pods is to run a self-hosted control plane—in other words, using the kubelet to supervise the individual control plane components.",
+      "retrieval_hit": true,
+      "missing_keywords": [],
+      "false_refusal": false,
+      "invented_code": [],
+      "undisclosed_deps": [],
+      "passed": true,
+      "judge": {
+        "faithfulness": 5,
+        "completeness": 5,
+        "unsupported_claims": []
+      }
+    },
+    {
+      "id": "k8s-restart-pod",
+      "answerable": true,
+      "latency_s": 4.57,
+      "retrieved_sources": [
+        "kubernetes_pods.md"
+      ],
+      "answer": "I don't have enough information to answer this question completely. The context clarifies an important distinction but doesn't cover the actual restart procedure.\n\n**What the context does clarify:**\n\nRestarting a container in a Pod should not be confused with restarting a Pod. A Pod is not a process, but an environment for running container(s). A Pod persists until it is deleted.\n\n**What's not covered:**\n\nThe context does not explain how to actually restart a Pod in Kubernetes. To get accurate instructions for your use case, you'll need documentation on Pod lifecycle management, deletion strategies, or workload controller update procedures (like Deployment rolling updates).",
+      "retrieval_hit": true,
+      "missing_keywords": [],
+      "false_refusal": false,
+      "invented_code": [],
+      "undisclosed_deps": [],
+      "passed": true,
+      "judge": {
+        "faithfulness": 5,
+        "completeness": 5,
+        "unsupported_claims": []
+      }
+    },
+    {
+      "id": "k8s-hybrid-cluster",
+      "answerable": true,
+      "latency_s": 2.86,
+      "retrieved_sources": [
+        "kubernetes_cluster_administration.md"
+      ],
+      "answer": "No. According to the documentation, Kubernetes does not directly support hybrid clusters. Instead, you can set up multiple clusters—one on-premises and one in the cloud—if you need to span both environments.",
+      "retrieval_hit": true,
+      "missing_keywords": [],
+      "false_refusal": false,
+      "invented_code": [],
+      "undisclosed_deps": [],
+      "passed": true,
+      "judge": {
+        "faithfulness": 5,
+        "completeness": 5,
+        "unsupported_claims": []
+      }
+    },
+    {
+      "id": "azure-first-pipeline",
+      "answerable": true,
+      "latency_s": 6.15,
+      "retrieved_sources": [
+        "azure_pipelines_create_first_pipeline.md"
+      ],
+      "answer": "To create your first pipeline in Azure Pipelines, follow these steps:\n\n1. **Fork a sample repository** into your GitHub account. Choose based on your language:\n   - Java: `https://github.com/MicrosoftDocs/pipelines-java`\n   - .NET Core: `https://github.com/MicrosoftDocs/pipelines-dotnet-core`\n   - Python: `https://github.com/Microsoft/python-sample-vscode-flask-tutorial`\n   - JavaScript: `https://github.com/Azure-Samples/js-e2e-express-server`\n\n2. **Create the pipeline** in Azure Pipelines by connecting to your repository. Azure Pipelines will analyze your code and recommend an appropriate template (Maven for Java, ASP.NET Core for .NET, Python package for Python, Node.js for JavaScript).\n\n3. **Review the YAML** that appears in the pipeline editor, then select **Save and run**.\n\n4. **Commit the pipeline file** by confirming the commit message when prompted. This creates an `azure-pipelines.yml` file in your repository.\n\n5. **Watch your pipeline run** by selecting the build job if you want to see it in action.\n\nYou'll then have a working YAML pipeline (`azure-pipelines.yml`) in your repository that you can customize. To make changes later, go to the **Pipelines** page, select your pipeline, and select **Edit** to modify the `azure-pipelines.yml` file.\n\nFor more details on pipeline structure, see the [Azure Pipelines YAML schema](/azure/devops/pipelines/yaml-schema/).",
+      "retrieval_hit": true,
+      "missing_keywords": [],
+      "false_refusal": false,
+      "invented_code": [],
+      "undisclosed_deps": [],
+      "passed": true,
+      "judge": {
+        "faithfulness": 5,
+        "completeness": 5,
+        "unsupported_claims": []
+      }
+    },
+    {
+      "id": "azure-artifacts-types",
+      "answerable": true,
+      "latency_s": 4.63,
+      "retrieved_sources": [
+        "azure_artifacts.md",
+        "azure_pipelines_overview.html"
+      ],
+      "answer": "Azure Artifacts supports publishing the following package types from Azure Pipelines:\n\n- **NuGet** — to Azure Artifacts feeds or public registries such as nuget.org\n- **npm** — to Azure Artifacts feeds or public registries such as npmjs.com\n- **Maven** — to Azure Artifacts feeds or public registries such as Maven Central, Google Maven Repository, Gradle Plugins, and JitPack\n- **Python** — to Azure Artifacts feeds or public registries such as PyPI.org\n- **Cargo** — to Azure Artifacts feeds or public registries such as Crates.io\n- **Universal Packages** — to Azure Artifacts feeds or Universal Packages upstream sources (Azure DevOps Services only)\n- **Symbols** — to Azure Artifacts symbol server or to a file share\n\nYou can also publish **build artifacts** and **pipeline artifacts** (the latter recommended for faster performance in DevOps Services).",
+      "retrieval_hit": true,
+      "missing_keywords": [],
+      "false_refusal": false,
+      "invented_code": [],
+      "undisclosed_deps": [],
+      "passed": true,
+      "judge": {
+        "faithfulness": 5,
+        "completeness": 5,
+        "unsupported_claims": []
+      }
+    },
+    {
+      "id": "azure-pipelines-what",
+      "answerable": true,
+      "latency_s": 4.6,
+      "retrieved_sources": [
+        "azure_pipelines_overview.html"
+      ],
+      "answer": "Azure Pipelines is the part of Azure DevOps that combines continuous integration, continuous testing, and continuous delivery to automatically build, test, and deploy code projects to any destination. It supports all major languages and project types, and can automate workflows whether your app is on-premises or in the cloud.\n\n**Key capabilities:**\n\n- **Continuous Integration (CI):** Automates merging and testing code, catching bugs early in the development cycle\n- **Continuous Testing:** Runs automated tests with any test framework across fast, scalable environments with rich analytics and reporting\n- **Continuous Delivery (CD):** Builds, tests, and deploys code to multiple test or production environments simultaneously\n\n**Supported technologies:**\n\n- Languages: Node.js, Python, Java, PHP, Ruby, C#, C++, Go, XCode, .NET, Android, iOS\n- Platforms: Windows, Linux, macOS\n- Version control: GitHub, Azure Repos, and other supported repositories\n- Test frameworks: Any test type and framework in your preferred technologies\n\n**Prerequisites to use Azure Pipelines:**\n\n1. Have an Azure DevOps organization\n2. Store your source code in a version control system\n3. Download a build agent and install it on a build server",
+      "retrieval_hit": true,
+      "missing_keywords": [],
+      "false_refusal": false,
+      "invented_code": [],
+      "undisclosed_deps": [],
+      "passed": true,
+      "judge": {
+        "faithfulness": 5,
+        "completeness": 5,
+        "unsupported_claims": []
+      }
+    },
+    {
+      "id": "cloudrun-resource-types",
+      "answerable": true,
+      "latency_s": 5.75,
+      "retrieved_sources": [
+        "Google_Cloud_Run_Docs.html"
+      ],
+      "answer": "Cloud Run offers four different resource types to run your code:\n\n1. **Service** - Responds to HTTP requests sent to a unique and stable HTTPS endpoint, using stateless container instances that support both dynamic autoscaling and manual scaling. Also responds to events and functions.\n\n2. **Job** - Executes parallelizable tasks that are executed manually or on a schedule, and run to completion. Jobs are well-suited for scripts, tools, database migrations, array processing, scheduled tasks, and AI workloads.\n\n3. **Worker pool** - Handles always-on background workloads such as workloads from message queues (Kafka, Pub/Sub, RabbitMQ). Worker pools are designed for continuous, non-HTTP, pull-based background processing and don't automatically scale.\n\n4. **Instance** - Runs long-lived workloads that need a singleton runtime environment. Unlike services, a Cloud Run instance is only one instance and is designed for persistent, singleton compute workloads such as long-lived AI agents, always-on servers, and developer environments.\n\nAll of these resource types run sandboxed container instances in the same execution environment and can integrate with Google Cloud services.",
+      "retrieval_hit": true,
+      "missing_keywords": [],
+      "false_refusal": false,
+      "invented_code": [],
+      "undisclosed_deps": [],
+      "passed": true,
+      "judge": {
+        "faithfulness": 5,
+        "completeness": 5,
+        "unsupported_claims": []
+      }
+    },
+    {
+      "id": "cloudrun-scale-to-zero",
+      "answerable": true,
+      "latency_s": 3.38,
+      "retrieved_sources": [
+        "Google_Cloud_Run_Docs.html"
+      ],
+      "answer": "Yes, Cloud Run services can scale down to zero instances by default. When there are no incoming requests to your service, even the last remaining instance will be removed. This behavior is called \"scale to zero.\"\n\nWhen a new request arrives for a service with no active instances, Cloud Run creates a new instance. However, this process can increase the response time for these initial requests, depending on how quickly your container becomes ready to handle traffic.\n\nYou can change this default behavior by configuring **minimum instances** to keep a minimum amount of instances active so that your service doesn't scale to zero, or by using **manual scaling** to maintain more control over the scaling behavior.",
+      "retrieval_hit": true,
+      "missing_keywords": [],
+      "false_refusal": false,
+      "invented_code": [],
+      "undisclosed_deps": [],
+      "passed": true,
+      "judge": {
+        "faithfulness": 5,
+        "completeness": 5,
+        "unsupported_claims": []
+      }
+    },
+    {
+      "id": "gh-incident-first-step",
+      "answerable": true,
+      "latency_s": 6.19,
+      "retrieved_sources": [
+        "GitHub_Respond_to_security_incident.html"
+      ],
+      "answer": "When responding to a security incident in your GitHub enterprise, your first step is to **assess the signal and validate quickly** to determine whether you're dealing with a real and active threat.\n\nSpecifically, you should:\n\n1. **Identify if this is a real threat** — If you cannot quickly and confidently rule the signal out as a false positive, treat it as real and proceed to containment.\n\n2. **Determine if the threat is still active** — Assess whether the attacker appears to still have access or if activity is ongoing. If so, prioritize immediate containment actions. If the compromise appears historical, you still need to investigate and remediate, but you may have more time to plan.\n\n3. **Assess the potential scope** — Consider how far the compromise could reach: a single credential, a repository, an organization, or the entire enterprise. This helps you scale your response appropriately.\n\n**Key principle:** If in doubt, treat the threat as real, and scale back your response as evidence allows.\n\nAs you progress through your response, make sure to preserve evidence (take screenshots, export logs, save affected files), keep a detailed record of your findings (times, dates, indicators of compromise, affected repositories), and communicate with relevant stakeholders including security leads, engineering managers, and legal/privacy teams if sensitive data is at risk.",
+      "retrieval_hit": true,
+      "missing_keywords": [],
+      "false_refusal": false,
+      "invented_code": [],
+      "undisclosed_deps": [],
+      "passed": true,
+      "judge": {
+        "faithfulness": 5,
+        "completeness": 5,
+        "unsupported_claims": []
+      }
+    },
+    {
+      "id": "gh-incident-leaked-creds",
+      "answerable": true,
+      "latency_s": 9.7,
+      "retrieved_sources": [
+        "GitHub_Respond_to_security_incident.html"
+      ],
+      "answer": "To contain a credential leak in your GitHub organization, you need to immediately revoke the compromised credentials and restrict access. Here are your containment options:\n\n## Revoke compromised credentials\n\nThe most immediate action is to revoke the affected credentials to prevent further misuse. You can revoke these credential types via the REST API if you know the literal token value:\n\n- Personal access token (classic)\n- Fine-grained personal access token\n- OAuth app access token\n- GitHub App user access token\n- GitHub App refresh token\n\nSee the GitHub credential types reference for a full list of revocation options by credential type.\n\n## Revoke credentials for a specific user\n\nIf you've identified a specific compromised account, enterprise or organization owners on GitHub Enterprise Cloud can revoke SSO authorizations for that individual user. For enterprises with Enterprise Managed Users, you can also delete credentials entirely. This is less disruptive than bulk actions while still containing the threat.\n\n## Revoke credentials of a specific type\n\nIf the leak is limited to one credential type (such as personal access tokens classic), enterprise or organization owners can revoke SSO authorizations or delete credentials of that type only across all members using the GitHub UI. This targets the affected credential type without disrupting other credentials.\n\n## Restrict access\n\nIn addition to revoking credentials, you can:\n\n- **Configure IP allowlists** to block unknown or suspicious IP addresses from accessing the organization\n- **Remove compromised or suspicious users** from the organization or suspend accounts\n- **Change repository visibility to private** for sensitive repositories\n\n**Important:** Base your choice of actions on the nature of the threat, potential scope, and evidence you have. If in doubt, treat the threat as real and scale back your response as evidence allows.",
+      "retrieval_hit": true,
+      "missing_keywords": [],
+      "false_refusal": false,
+      "invented_code": [],
+      "undisclosed_deps": [],
+      "passed": true,
+      "judge": {
+        "faithfulness": 5,
+        "completeness": 5,
+        "unsupported_claims": []
+      }
+    },
+    {
+      "id": "copilot-incident-cause",
+      "answerable": true,
+      "latency_s": 3.58,
+      "retrieved_sources": [
+        "GitHub_Respond_to_security_incident.html",
+        "incident_github_copilot_AI.html"
+      ],
+      "answer": "The GitHub Copilot incident on July 29, 2026 was caused by **degradation of an upstream model provider** between 19:45 UTC and 21:51 UTC.\n\n**Severity:**\n- Overall Copilot failure rate: 0.006% across all requests\n- Fable 5 model failure rate: peaked at 21%\n- Other models remained available and unaffected\n\nThe external AI model provider identified and resolved the issue, and Copilot traffic fully recovered by 21:51 UTC. GitHub is working to add endpoint redundancy to mitigate similar provider issues in the future.",
+      "retrieval_hit": true,
+      "missing_keywords": [],
+      "false_refusal": false,
+      "invented_code": [],
+      "undisclosed_deps": [],
+      "passed": true,
+      "judge": {
+        "faithfulness": 5,
+        "completeness": 5,
+        "unsupported_claims": []
+      }
+    },
+    {
+      "id": "oos-terraform-backend",
+      "answerable": false,
+      "latency_s": 3.84,
+      "retrieved_sources": [
+        "docker_compose.md"
+      ],
+      "answer": "I don't have enough information to answer this question. The provided context only covers Docker Compose configuration and behavior—it doesn't include any documentation about Terraform S3 backends or remote state configuration.\n\nTo get accurate guidance on configuring a Terraform S3 backend, you'll need to consult Terraform-specific documentation.",
+      "refused": true,
+      "passed": true
+    },
+    {
+      "id": "oos-helm-install",
+      "answerable": false,
+      "latency_s": 4.67,
+      "retrieved_sources": [
+        "kubernetes_cluster_administration.md"
+      ],
+      "answer": "I don't have enough information to answer this question. The provided context covers Kubernetes cluster administration topics like authentication, authorization, admission controllers, sysctls, auditing, kubelet security, DNS, and logging—but it does not include any documentation about Helm or how to install Helm charts.\n\nTo get accurate instructions on installing Helm charts, you'll need to consult Helm-specific documentation or your organization's internal guides.",
+      "refused": true,
+      "passed": true
+    }
+  ]
+}

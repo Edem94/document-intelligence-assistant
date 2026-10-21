@@ -1,0 +1,16 @@
+# Run configuration for the Document Intelligence Assistant: one service, since Chroma runs
+# in-process and the LLM is an external API. The image (with the search index) is built from
+# the Dockerfile.
+#   docker compose up --build -d     build and start in the background
+#   docker compose logs -f app       follow logs
+#   docker compose down              stop and remove the container
+services:
+  app:
+    build: .
+    image: document-intelligence-assistant:latest
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env   # ANTHROPIC_API_KEY - read at run time, never baked into the image
+    restart: unless-stopped
+    # Healthcheck comes from the Dockerfile: GET /health must return 200

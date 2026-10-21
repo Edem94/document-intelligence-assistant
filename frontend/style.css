@@ -1,0 +1,66 @@
+body {
+  font-family: system-ui, sans-serif;
+  max-width: 760px;
+  margin: 40px auto;
+  padding: 0 16px;
+  color: #1f2328;
+}
+
+textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px;
+  font: inherit;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+button {
+  padding: 8px 18px;
+  font: inherit;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+#answer {
+  background: #f6f8fa;
+  padding: 2px 16px;
+  border-radius: 6px;
+  margin-top: 16px;
+  line-height: 1.5;
+}
+
+#answer.error {
+  background: #ffebe9;
+  color: #82071e;
+}
+
+#answer pre {
+  background: #eaeef2;
+  padding: 10px;
+  border-radius: 4px;
+  overflow-x: auto;
+}
+
+#answer code {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.9em;
+}
+
+#sources {
+  margin-top: 6px;
+}
+
+.muted {
+  color: #59636e;
+  font-size: 0.9em;
+}

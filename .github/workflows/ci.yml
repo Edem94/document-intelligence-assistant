@@ -1,0 +1,87 @@
+# CI: runs on every pull request into main, on every push to main, and on demand (Actions tab).
+# Needs no secrets: unit tests stub out the LLM, and the container smoke test only checks that the
+# app starts and serves its UI (no question is sent to Claude).
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# A new push to the same branch cancels the previous, now-outdated run
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.lock.txt
+
+      - name: Install dependencies (CPU-only PyTorch, same as the Dockerfile)
+        run: |
+          pip install torch==2.14.0 --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.lock.txt pytest
+
+      - name: Run tests
+        run: python -m pytest tests -v
+
+  docker:
+    name: Docker build + smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: document-intelligence-assistant:ci
+          # Reuse layers between runs (packages, model, index) - first run ~12 min, later runs much faster
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Start container
+        # A placeholder key is enough: startup only loads the embedding model and the index
+        run: docker run -d --name app -p 8000:8000 -e ANTHROPIC_API_KEY=ci-placeholder document-intelligence-assistant:ci
+
+      - name: Wait until the container is healthy
+        run: |
+          for i in $(seq 1 30); do
+            status=$(docker inspect -f '{{.State.Health.Status}}' app)
+            echo "health: $status"
+            if [ "$status" = "healthy" ]; then exit 0; fi
+            if [ "$status" = "unhealthy" ]; then break; fi
+            sleep 5
+          done
+          echo "Container did not become healthy"
+          exit 1
+
+      - name: Smoke test endpoints
+        run: |
+          curl -fsS localhost:8000/health
+          curl -fsS localhost:8000/ | grep -q "<title>Document Intelligence Assistant</title>"
+          curl -fsS -o /dev/null localhost:8000/static/app.js
+          echo "All endpoints OK"
+
+      - name: Container logs
+        if: always()
+        run: docker logs app || true

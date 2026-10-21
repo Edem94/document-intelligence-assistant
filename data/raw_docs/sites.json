@@ -1,0 +1,8 @@
+{
+  "_comment": "Website each Markdown file was published on. Root-relative links like (/docs/setup/) are resolved against it during ingest; without an entry they become plain text. Add a line when you add a .md file.",
+  "kubernetes_cluster_administration.md": "https://kubernetes.io",
+  "kubernetes_pods.md": "https://kubernetes.io",
+  "docker_compose.md": "https://docs.docker.com",
+  "azure_artifacts.md": "https://learn.microsoft.com",
+  "azure_pipelines_create_first_pipeline.md": "https://learn.microsoft.com"
+}
