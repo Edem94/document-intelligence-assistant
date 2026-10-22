@@ -1,4 +1,4 @@
-## 5. Retrieval + generation chain (the "RAG" part)
+# Retrieval + generation chain (the "RAG" part)
 
 import os
 from functools import lru_cache
