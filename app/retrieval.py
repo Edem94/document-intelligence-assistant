@@ -1,4 +1,4 @@
-## Retrieval: query rewriting -> fusion -> LLM rerank -> neighbour expansion
+# Retrieval: query rewriting -> fusion -> LLM rerank -> neighbour expansion
 
 import logging
 import re

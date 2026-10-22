@@ -1,4 +1,4 @@
-## 6. FastAPI service: health check, demo page, and the /ask endpoint
+# FastAPI service: health check, demo page, and the /ask endpoint
 
 import logging
 import os
