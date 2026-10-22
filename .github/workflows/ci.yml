@@ -93,7 +93,7 @@ jobs:
     name: Deploy to Cloud Run
     needs: [tests, docker]
     # Only for merges/pushes to main, and only once the GCP repository variables exist
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.GCP_PROJECT_ID != ''
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && vars.GCP_PROJECT_ID != ''
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment:
