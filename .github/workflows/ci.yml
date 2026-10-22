@@ -1,6 +1,8 @@
-# CI: runs on every pull request into main, on every push to main, and on demand (Actions tab).
-# Needs no secrets: unit tests stub out the LLM, and the container smoke test only checks that the
-# app starts and serves its UI (no question is sent to Claude).
+# CI/CD: runs on every pull request into main, on every push to main, and on demand (Actions tab).
+#   tests + docker  - every run. Need no secrets: unit tests stub out the LLM, and the container
+#                     smoke test only checks that the app starts and serves its UI.
+#   deploy          - pushes to main only, after both checks pass: image -> Artifact Registry -> Cloud Run.
+#                     Skipped until the GCP_* repository variables are set (see the one-time setup).
 name: CI
 
 on:
@@ -10,10 +12,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# A new push to the same branch cancels the previous, now-outdated run
+# A new push to a PR branch cancels the previous, now-outdated run. Runs on main are never
+# cancelled, so a deploy is not interrupted halfway; they queue instead.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
@@ -85,3 +88,72 @@ jobs:
       - name: Container logs
         if: always()
         run: docker logs app || true
+
+  deploy:
+    name: Deploy to Cloud Run
+    needs: [tests, docker]
+    # Only for merges/pushes to main, and only once the GCP repository variables exist
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.GCP_PROJECT_ID != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: production   # Settings > Environments: optionally require your approval before deploying
+      url: ${{ steps.deploy.outputs.url }}
+    permissions:
+      contents: read
+      id-token: write    # short-lived OIDC token for Workload Identity Federation - no JSON key stored
+    env:
+      IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.AR_REPOSITORY }}/document-intelligence-assistant:${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Let Docker push to Artifact Registry
+        run: gcloud auth configure-docker ${{ vars.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push image (tagged with the commit SHA)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ env.IMAGE }}
+          cache-from: type=gha   # reuses the layers the docker job just built
+          provenance: false      # single-platform image manifest, no attestation index
+
+      - name: Deploy
+        id: deploy
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: document-intelligence-assistant
+          region: ${{ vars.GCP_REGION }}
+          image: ${{ env.IMAGE }}
+          # --port: the image's uvicorn listens on 8000 (Cloud Run's default is 8080)
+          # --memory: ~740 MiB at rest (embedding model + index), headroom for requests
+          # --max-instances: caps cost - every /ask is a paid Claude API call
+          flags: >-
+            --port=8000
+            --memory=2Gi
+            --cpu=1
+            --cpu-boost
+            --min-instances=0
+            --max-instances=2
+            --concurrency=20
+            --timeout=60
+            --service-account=${{ vars.GCP_RUNTIME_SA }}
+            --allow-unauthenticated
+          secrets: |
+            ANTHROPIC_API_KEY=anthropic-api-key:latest
+
+      - name: Smoke test the live service
+        run: |
+          curl -fsS --retry 6 --retry-delay 10 --retry-all-errors "${{ steps.deploy.outputs.url }}/health"
+          echo "Deployed: ${{ steps.deploy.outputs.url }}"
