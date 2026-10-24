@@ -150,6 +150,9 @@ jobs:
             --timeout=60
             --service-account=${{ vars.GCP_RUNTIME_SA }}
             --allow-unauthenticated
+          # Google's front end appends the real client IP to X-Forwarded-For; the rate limiter reads it
+          env_vars: |
+            TRUSTED_PROXY_HOPS=1
           secrets: |
             ANTHROPIC_API_KEY=anthropic-api-key:latest
 
