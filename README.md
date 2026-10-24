@@ -7,7 +7,7 @@ I built it as a portfolio project to learn how to make an LLM application **reli
 [![CI](https://github.com/Edem94/document-intelligence-assistant/actions/workflows/ci.yml/badge.svg)](https://github.com/Edem94/document-intelligence-assistant/actions/workflows/ci.yml)
 
 **Live demo:** https://document-intelligence-assistant-lji4mh65gq-ew.a.run.app
-![alt text](image.png)
+![alt text](docs/screenshot.png)
 
 ## What it does
 
