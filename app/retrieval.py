@@ -31,8 +31,10 @@ Pick up to {k} candidates that best help answer the question. Prefer:
 Reply with only the candidate numbers, most useful first, comma-separated (e.g. 4, 1, 9)."""
 
 TOP_K = 8             # chunks chosen by the reranker (before neighbour expansion)
-FETCH_PER_QUERY = 15  # candidates per query before fusion
+FETCH_PER_QUERY = 25  # candidates per query before fusion (15 missed a key chunk ranked 16th)
 RERANK_POOL = 30      # fused candidates shown to the reranker (20 dropped good examples once the corpus grew)
+MAX_PER_SOURCE = 10   # per file in that pool, so one long page can't fill it (one page had 15 of 30)
+MAX_PICKS_PER_SOURCE = 4  # per file among the reranker's TOP_K picks (it once gave 7 of 8 to one page)
 PREVIEW_CHARS = 600   # how much of each candidate the reranker sees
 
 
@@ -47,8 +49,9 @@ class Retriever:
             queries.append(self.llm.invoke(REWRITE_TEMPLATE.format(question=question)).content.strip())
         except Exception:
             logger.warning("Query rewrite failed; searching with the original question only", exc_info=True)
-        candidates = fuse_results([self.vector_store.similarity_search(q, k=FETCH_PER_QUERY) for q in queries],
-                                  k=RERANK_POOL)
+        fused = fuse_results([self.vector_store.similarity_search(q, k=FETCH_PER_QUERY) for q in queries],
+                             k=len(queries) * FETCH_PER_QUERY)
+        candidates = limit_per_source(fused, MAX_PER_SOURCE, k=RERANK_POOL)
         return expand_neighbors(self.vector_store, self.rerank(question, candidates))
 
     def rerank(self, question: str, candidates: list[Document]) -> list[Document]:
@@ -57,13 +60,32 @@ class Retriever:
             for i, d in enumerate(candidates, 1)
         )
         try:
-            reply = self.llm.invoke(RERANK_TEMPLATE.format(question=question, candidates=listing, k=TOP_K)).content
+            # Ask for a longer ranked list than we keep, so the per-page cap below has others to fall back on
+            reply = self.llm.invoke(RERANK_TEMPLATE.format(question=question, candidates=listing, k=2 * TOP_K)).content
         except Exception:
             logger.warning("Rerank failed; using fused order", exc_info=True)
-            return candidates[:TOP_K]
+            return limit_per_source(candidates, MAX_PICKS_PER_SOURCE, k=TOP_K)
         picks = [int(n) for n in re.findall(r"\d+", reply) if 1 <= int(n) <= len(candidates)]
-        picks = list(dict.fromkeys(picks))[:TOP_K]
-        return [candidates[i - 1] for i in picks] if picks else candidates[:TOP_K]
+        ranked = [candidates[i - 1] for i in dict.fromkeys(picks)] or candidates
+        # Neighbour expansion adds the chunks around each pick, so a few picks still cover a whole section
+        return limit_per_source(ranked, MAX_PICKS_PER_SOURCE, k=TOP_K)
+
+
+def limit_per_source(docs: list[Document], max_per_source: int, k: int) -> list[Document]:
+    """Keep the ranked order, but at most `max_per_source` chunks from any one file, and `k` in total.
+
+    Long pages (Pod lifecycle, Deployments) produce many similar chunks; without a cap they filled the
+    whole candidate pool and the one short note that answered the question never reached the reranker.
+    """
+    per_source, kept = defaultdict(int), []
+    for doc in docs:
+        source = doc.metadata.get("source")
+        if per_source[source] < max_per_source:
+            per_source[source] += 1
+            kept.append(doc)
+            if len(kept) == k:
+                break
+    return kept
 
 
 def fuse_results(results, k):

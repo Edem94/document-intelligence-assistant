@@ -1,11 +1,12 @@
 # FastAPI service: health check, demo page, and the /ask endpoint
 
+import json
 import logging
 import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -16,7 +17,7 @@ from app.config import (
     RATE_LIMIT_PER_DAY,
     RATE_LIMIT_PER_MINUTE,
 )
-from app.rag_chain import ask_question, get_qa_chain
+from app.rag_chain import ask_question, get_qa_chain, stream_answer
 from app.rate_limit import RateLimiter, client_ip
 
 logger = logging.getLogger("uvicorn.error")
@@ -95,16 +96,46 @@ def health(request: Request):
     return {"status": "ok"}
 
 
-@app.post("/ask", response_model=AnswerResponse)
-def ask(body: QuestionRequest, request: Request):
-    # Sync def: FastAPI runs it in a threadpool, so the blocking LLM call doesn't stall the event loop
-    # Rate limits first: every /ask attempt counts, before any work (or paid API call) happens
+def prepare_question(body: QuestionRequest, request: Request) -> str:
+    """Checks shared by /ask and /ask/stream. They run before any streaming starts, so failures are
+    still plain HTTP errors (429/503/422) that the frontend can show."""
+    # Rate limits first: every attempt counts, before any work (or paid API call) happens
     check_rate_limits(request)
     if request.app.state.startup_error:
         raise HTTPException(status_code=503, detail=request.app.state.startup_error)
     question = body.question.strip()
     if not question:
         raise HTTPException(status_code=422, detail="Question must not be blank")
+    return question
+
+
+@app.post("/ask/stream")
+def ask_stream(body: QuestionRequest, request: Request):
+    """Same answer as /ask, streamed as newline-delimited JSON events:
+    {"type": "sources", "sources": [...]} once retrieval is done, then {"type": "token", "text": "..."}
+    while the answer is written, then {"type": "done"} - or {"type": "error", "detail": "..."}."""
+    question = prepare_question(body, request)
+
+    def events():
+        try:
+            for kind, data in stream_answer(question):
+                payload = {"type": "sources", "sources": data} if kind == "sources" else {"type": "token", "text": data}
+                yield json.dumps(payload) + "\n"
+            yield json.dumps({"type": "done"}) + "\n"
+        except Exception:
+            # Headers (200) are already sent at this point, so the error has to travel inside the stream
+            logger.exception("Failed while streaming an answer")
+            yield json.dumps({"type": "error", "detail": "Failed to generate an answer. Please try again."}) + "\n"
+
+    # no-cache / X-Accel-Buffering: tell proxies to pass each line through immediately, not buffer the body
+    return StreamingResponse(events(), media_type="application/x-ndjson",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.post("/ask", response_model=AnswerResponse)
+def ask(body: QuestionRequest, request: Request):
+    # Sync def: FastAPI runs it in a threadpool, so the blocking LLM call doesn't stall the event loop
+    question = prepare_question(body, request)
     try:
         return ask_question(question)
     except Exception:
