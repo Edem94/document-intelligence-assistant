@@ -30,10 +30,10 @@ I evaluate every change against **24 test questions** ([eval/eval_set.json](eval
 | Expected source retrieved | 100% | **100%** |
 | Answers with invented code | 1 | **0** |
 | Out-of-scope questions refused | 100% | **100%** |
-| Faithfulness / completeness (LLM judge, 1–5) | 4.94 / 4.67 | **4.95 / 4.95** |
-| Average latency | 3.6 s | 6.4 s |
+| Faithfulness / completeness (LLM judge, 1–5) | 4.94 / 4.67 | **4.95 / 4.91** |
+| Average latency (full answer) | 3.6 s | 6.6 s |
 
-The one remaining failure is a known retrieval issue (see [Limitations](#limitations-and-next-steps)). Latency went up because the pipeline gained a reranking step; I traded speed for answers that are complete and correct.
+The one remaining failure is a known retrieval issue (see [Limitations](#limitations-and-next-steps)). Latency went up because the pipeline gained a query rewrite and a reranking step; I traded speed for answers that are complete and correct. Answers now stream, so text starts appearing before the full answer is done.
 
 **A pass needs more than an LLM judge's score.** Early on I found the judge giving 5/5 to an answer with fabricated YAML, so pass/fail is decided by deterministic checks:
 
@@ -175,12 +175,12 @@ These are the problems that taught me the most. Each one started as "the answer 
 - **Prompt rules interfere with each other.** Adding a rule for `--watch` made the model drop a different rule. Merging related rules into one ordered checklist, and putting a reminder at the end of the prompt, fixed both. Without the eval suite I wouldn't have noticed.
 - **Adding documents can make other answers worse.** New Kubernetes and Docker pages pushed good chunks out of the candidate pool for unrelated questions. Re-running the full eval after every corpus change caught it.
 - **Small infrastructure details matter.** A template `.dockerignore` rule (`**/Dockerfile*`) would have silently dropped `Dockerfile_overview.html` from the index inside the container. Relative links from the docs pointed at my own server and returned 404s.
-- **One long page can crowd out the answer.** For "How do I restart a Pod?", two long pages filled 25 of the 30 candidates, so the short note that actually answered it never reached the reranker. It ranked 16th, one place outside the cut-off. Capping how many chunks each page may contribute fixed it.
+- **One long page can crowd out the answer, but a cap can backfire.** For "How do I restart a Pod?", two long pages filled 25 of the 30 candidates, so the key note ("a Pod persists until it is deleted") ranked 16th, just outside the cut-off. Capping chunks per page in the candidate pool got it into the answer. Capping the reranker's *picks* per page as well looked like the next step, but it cut the build commands out of the Dockerfile answer. Comparing four settings on what each answer's context actually contained showed the real fix was more picks (10 instead of 8), not a cap.
 - **Don't trust the client's view of its own IP.** Behind Cloud Run's proxy, every request seems to come from the proxy's IP. The real client IP is in `X-Forwarded-For`, but only the entry the trusted proxy appended is reliable: uvicorn's `--forwarded-allow-ips="*"` reads the first entry, which clients can fake. I verified the fix on the live service with spoofed headers and Cloud Run logs.
 
 ## Limitations and next steps
 
-- **One eval case still fails:** "How do I restart a Kubernetes pod?" The chunk explaining that Pods are replaced by controllers, not restarted, gets crowded out by newer documents. Next fix: retrieval tuned for partially covered questions.
+- **One eval case still fails:** "How do I restart a Kubernetes pod?" The answer now explains that a Pod isn't restarted but persists until deleted, but it misses the practical next step: a controller (e.g. a Deployment) creates a replacement. The docs say that in words like "replacement Pods" and "pod template", which the small embedding model doesn't connect to "restart". Those chunks rank 43rd or lower, and an explanation-style search query didn't rank them any better. Next step: a stronger embedding model, measured with the same eval.
 - **A small, self-written eval set.** 24 cases is enough to catch regressions, not to prove general quality. I'd like to grow it and add questions written by other people.
 - **The first words take a few seconds.** The answer streams as it's written, but query rewriting and reranking (two extra LLM calls) run before it starts.
 - **Rate limits are per instance.** They're kept in memory, so with up to 2 Cloud Run instances a client could get up to 2× the limits; shared limits would need Redis or Cloud Armor.
