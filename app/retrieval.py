@@ -30,11 +30,10 @@ Pick up to {k} candidates that best help answer the question. Prefer:
 - for a config file you pick, also the excerpt showing the commands that build/run/use it, if one is listed
 Reply with only the candidate numbers, most useful first, comma-separated (e.g. 4, 1, 9)."""
 
-TOP_K = 8             # chunks chosen by the reranker (before neighbour expansion)
+TOP_K = 10            # chunks chosen by the reranker (before neighbour expansion); 8 dropped .dockerignore
 FETCH_PER_QUERY = 25  # candidates per query before fusion (15 missed a key chunk ranked 16th)
 RERANK_POOL = 30      # fused candidates shown to the reranker (20 dropped good examples once the corpus grew)
 MAX_PER_SOURCE = 10   # per file in that pool, so one long page can't fill it (one page had 15 of 30)
-MAX_PICKS_PER_SOURCE = 4  # per file among the reranker's TOP_K picks (it once gave 7 of 8 to one page)
 PREVIEW_CHARS = 600   # how much of each candidate the reranker sees
 
 
@@ -60,15 +59,13 @@ class Retriever:
             for i, d in enumerate(candidates, 1)
         )
         try:
-            # Ask for a longer ranked list than we keep, so the per-page cap below has others to fall back on
-            reply = self.llm.invoke(RERANK_TEMPLATE.format(question=question, candidates=listing, k=2 * TOP_K)).content
+            reply = self.llm.invoke(RERANK_TEMPLATE.format(question=question, candidates=listing, k=TOP_K)).content
         except Exception:
             logger.warning("Rerank failed; using fused order", exc_info=True)
-            return limit_per_source(candidates, MAX_PICKS_PER_SOURCE, k=TOP_K)
+            return candidates[:TOP_K]
         picks = [int(n) for n in re.findall(r"\d+", reply) if 1 <= int(n) <= len(candidates)]
-        ranked = [candidates[i - 1] for i in dict.fromkeys(picks)] or candidates
-        # Neighbour expansion adds the chunks around each pick, so a few picks still cover a whole section
-        return limit_per_source(ranked, MAX_PICKS_PER_SOURCE, k=TOP_K)
+        picks = list(dict.fromkeys(picks))[:TOP_K]
+        return [candidates[i - 1] for i in picks] if picks else candidates[:TOP_K]
 
 
 def limit_per_source(docs: list[Document], max_per_source: int, k: int) -> list[Document]:
