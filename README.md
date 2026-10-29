@@ -7,7 +7,8 @@ I built it as a portfolio project to learn how to make an LLM application **reli
 [![CI](https://github.com/Edem94/document-intelligence-assistant/actions/workflows/ci.yml/badge.svg)](https://github.com/Edem94/document-intelligence-assistant/actions/workflows/ci.yml)
 
 **Live demo:** https://document-intelligence-assistant-lji4mh65gq-ew.a.run.app
-![alt text](docs/screenshot.png)
+
+![The assistant answering "How do I define a multi-container app with Docker Compose?" with a compose.yaml example and its Requires list](docs/screenshot.png)
 
 ## What it does
 
@@ -17,7 +18,7 @@ Ask *"How do I define a multi-container app with Docker Compose?"* and you get:
 - a **Requires:** list that names what the example depends on: the `.env` file with its values, the `Dockerfile` behind `build: .`, and the exact run command (`docker compose up --watch` when the example uses Compose Watch)
 - the source documents it used
 
-Questions outside the docs, like *"How do I configure a Terraform S3 backend?"*, get an honest "I don't have enough information" instead of an answer from the model's general knowledge.
+The answer streams in as it's written. Questions outside the docs, like *"How do I configure a Terraform S3 backend?"*, get an honest "I don't have enough information" instead of an answer from the model's general knowledge.
 
 ## Results
 
@@ -29,10 +30,10 @@ I evaluate every change against **24 test questions** ([eval/eval_set.json](eval
 | Expected source retrieved | 100% | **100%** |
 | Answers with invented code | 1 | **0** |
 | Out-of-scope questions refused | 100% | **100%** |
-| Faithfulness / completeness (LLM judge, 1–5) | 4.94 / 4.67 | **4.95 / 4.95** |
-| Average latency | 3.6 s | 6.4 s |
+| Faithfulness / completeness (LLM judge, 1–5) | 4.94 / 4.67 | **4.95 / 4.91** |
+| Average latency (full answer) | 3.6 s | 6.6 s |
 
-The one remaining failure is a known retrieval issue (see [Limitations](#limitations-and-next-steps)). Latency went up because the pipeline gained a reranking step; I traded speed for answers that are complete and correct.
+The one remaining failure is a known retrieval issue (see [Limitations](#limitations-and-next-steps)). Latency went up because the pipeline gained a query rewrite and a reranking step; I traded speed for answers that are complete and correct. Answers now stream, so text starts appearing before the full answer is done.
 
 **A pass needs more than an LLM judge's score.** Early on I found the judge giving 5/5 to an answer with fabricated YAML, so pass/fail is decided by deterministic checks:
 
@@ -47,9 +48,9 @@ flowchart LR
     Q[Question] --> RW["Query rewrite<br/>(Claude writes the config/commands<br/>the answer would contain)"]
     Q --> S1[Vector search]
     RW --> S2[Vector search]
-    S1 --> F["Rank fusion<br/>(RRF, 30 candidates)"]
+    S1 --> F["Rank fusion<br/>(RRF, 30 candidates,<br/>max 10 per page)"]
     S2 --> F
-    F --> RR["LLM rerank<br/>(picks the 8 most useful)"]
+    F --> RR["LLM rerank<br/>(8 most useful,<br/>max 4 per page)"]
     RR --> X["Context completion<br/>neighbour chunks · .env definitions ·<br/>install steps for each OS"]
     X --> G["Claude Haiku 4.5<br/>answers from the docs only"]
     G --> A[Answer + sources]
@@ -67,6 +68,7 @@ flowchart LR
 1. **Query rewrite ("code HyDE")**: a YAML-heavy chunk is a poor match for a plain-English question but a close match for similar YAML. So Claude first writes the snippet the answer would contain, and both the question and the snippet are searched.
 2. **Reciprocal Rank Fusion** merges the two result lists, always keeping each query's best hit.
 3. **LLM rerank**: embeddings rank "uses the same words" above "actually answers it". A complete two-service Compose file ranked 9th; a reranker picks it reliably.
+   Both the 30 candidates and the 8 picks are capped per page (10 and 4), so one long page can't crowd out the rest.
 4. **Context completion** (deterministic, no LLM): adds neighbouring chunks (a tutorial step's intro, its YAML and the files it depends on are split across chunks), the chunk that defines each `${VARIABLE}`, and install steps for every OS when a page lists several.
 
 **Generation** ([app/rag_chain.py](app/rag_chain.py)) uses Claude Haiku 4.5 with a prompt that:
@@ -82,10 +84,10 @@ flowchart LR
 |---|---|
 | LLM | Claude Haiku 4.5 (Anthropic API) via LangChain |
 | Retrieval | Chroma, sentence-transformers (`all-MiniLM-L6-v2`), RRF, LLM reranking |
-| Backend | FastAPI, Uvicorn, Pydantic |
+| Backend | FastAPI, Uvicorn, Pydantic; streamed responses (NDJSON); per-IP rate limiting |
 | Frontend | Plain HTML/CSS/JS, `marked` + DOMPurify for safe Markdown rendering |
 | Evaluation | Custom suite: deterministic checks + LLM-as-judge |
-| Testing | pytest (31 tests: API + loader regression tests) |
+| Testing | pytest (52 tests: API, streaming, rate limiting, loader regression tests) |
 | Delivery | Docker (multi-stage, non-root), Docker Compose, GitHub Actions, Google Cloud Run |
 
 ## Run it
@@ -120,19 +122,22 @@ uvicorn app.main:app --reload
 |---|---|
 | `GET /` | Web UI |
 | `POST /ask` | `{"question": "..."}` → `{"answer": "...", "sources": [{"file": "...", "page": null}]}` |
+| `POST /ask/stream` | Same answer, streamed as one JSON event per line: `sources` first, then `token`s, then `done` (used by the UI) |
 | `GET /health` | `200` when ready; `503` with the reason if the index or API key is missing |
 | `GET /docs` | Interactive API docs (Swagger) |
+
+Both question endpoints are rate-limited, because every question is a paid API call: 10 per minute and 100 per day per IP, plus 1,000 per day in total (configurable with environment variables). Over the limit, they return `429` with a `Retry-After` header.
 
 ## Tests and evaluation
 
 ```bash
 pip install pytest                 # not in the runtime lock file
-python -m pytest tests -v          # 31 tests, no API key needed (the LLM is stubbed)
+python -m pytest tests -v          # 52 tests, no API key needed (the LLM is stubbed)
 python -m eval.run_eval            # 24-question eval with LLM judge (~3 min, uses your API key)
 python -m eval.run_eval --no-judge --only compose-define-multi docker-write-dockerfile
 ```
 
-The loader tests are regression tests for bugs I actually hit. To check they work, I temporarily broke each feature in the loader (7 different ways) and confirmed the tests failed every time.
+The loader tests are regression tests for bugs I actually hit. To check they work, I temporarily broke each feature in the loader (7 different ways) and confirmed the tests failed every time. I did the same for rate limiting: skipping the check and reading a spoofable IP header are both caught.
 
 ## CI/CD
 
@@ -146,15 +151,16 @@ The loader tests are regression tests for bugs I actually hit. To check they wor
 
 ```
 app/
-  main.py        FastAPI app: /ask, /health, static frontend
-  rag_chain.py   prompt + answer generation
+  main.py        FastAPI app: /ask, /ask/stream, /health, static frontend
+  rag_chain.py   prompt + answer generation (whole or streamed)
   retrieval.py   query rewrite, fusion, reranking, context completion
+  rate_limit.py  sliding-window rate limiter, proxy-aware client IP
   ingest.py      loading, cleaning, chunking, indexing
   config.py      paths and settings
 frontend/        index.html, style.css, app.js
 data/raw_docs/   27 source documents (+ sites.json for resolving Markdown links)
 eval/            eval_set.json, run_eval.py, results/
-tests/           API and loader tests
+tests/           API, streaming, rate limiting and loader tests
 Dockerfile       multi-stage production image
 compose.yaml     run configuration
 ```
@@ -169,11 +175,13 @@ These are the problems that taught me the most. Each one started as "the answer 
 - **Prompt rules interfere with each other.** Adding a rule for `--watch` made the model drop a different rule. Merging related rules into one ordered checklist, and putting a reminder at the end of the prompt, fixed both. Without the eval suite I wouldn't have noticed.
 - **Adding documents can make other answers worse.** New Kubernetes and Docker pages pushed good chunks out of the candidate pool for unrelated questions. Re-running the full eval after every corpus change caught it.
 - **Small infrastructure details matter.** A template `.dockerignore` rule (`**/Dockerfile*`) would have silently dropped `Dockerfile_overview.html` from the index inside the container. Relative links from the docs pointed at my own server and returned 404s.
+- **One long page can crowd out the answer, but a cap can backfire.** For "How do I restart a Pod?", two long pages filled 25 of the 30 candidates, so the key note ("a Pod persists until it is deleted") ranked 16th, just outside the cut-off. Capping chunks per page in the candidate pool got it into the answer. Capping the reranker's *picks* per page as well looked like the next step, but it cut the build commands out of the Dockerfile answer. Comparing four settings on what each answer's context actually contained showed the real fix was more picks (10 instead of 8), not a cap.
+- **Don't trust the client's view of its own IP.** Behind Cloud Run's proxy, every request seems to come from the proxy's IP. The real client IP is in `X-Forwarded-For`, but only the entry the trusted proxy appended is reliable: uvicorn's `--forwarded-allow-ips="*"` reads the first entry, which clients can fake. I verified the fix on the live service with spoofed headers and Cloud Run logs.
 
 ## Limitations and next steps
 
-- **One eval case still fails:** "How do I restart a Kubernetes pod?" The chunk explaining that Pods are replaced by controllers, not restarted, gets crowded out by newer documents. Next fix: retrieval tuned for partially covered questions.
+- **One eval case still fails:** "How do I restart a Kubernetes pod?" The answer now explains that a Pod isn't restarted but persists until deleted, but it misses the practical next step: a controller (e.g. a Deployment) creates a replacement. The docs say that in words like "replacement Pods" and "pod template", which the small embedding model doesn't connect to "restart". Those chunks rank 43rd or lower, and an explanation-style search query didn't rank them any better. Next step: a stronger embedding model, measured with the same eval.
 - **A small, self-written eval set.** 24 cases is enough to catch regressions, not to prove general quality. I'd like to grow it and add questions written by other people.
-- **Latency is ~6 s** because of the extra rewrite and rerank calls. Streaming the answer to the UI would make it feel much faster.
-- **No rate limiting yet.** Every `/ask` is a paid API call, so the Cloud Run deploy caps instances, and a per-client rate limit is the next thing to add.
+- **The first words take a few seconds.** The answer streams as it's written, but query rewriting and reranking (two extra LLM calls) run before it starts.
+- **Rate limits are per instance.** They're kept in memory, so with up to 2 Cloud Run instances a client could get up to 2× the limits; shared limits would need Redis or Cloud Armor.
 - **The image is large** (~600 MB compressed), mostly PyTorch for a small embedding model. An ONNX-based embedder could shrink it a lot.

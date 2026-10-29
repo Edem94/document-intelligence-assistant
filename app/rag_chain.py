@@ -66,8 +66,8 @@ Before you finish, check every config example in your answer: it needs its **Req
 (variables and where they are set, other files, and the build/run commands in code blocks)."""
 
 @lru_cache(maxsize=1)
-def get_qa_chain():
-    # Built once per process: loading the embedding model and opening Chroma is slow
+def get_pipeline():
+    """(retrieve, answer_chain), built once per process: loading the embedding model and Chroma is slow."""
     if not os.path.isdir(CHROMA_DIR):
         raise RuntimeError(f"Vector store not found at {CHROMA_DIR} - run `python -m app.ingest` first.")
 
@@ -79,22 +79,36 @@ def get_qa_chain():
         api_key=ANTHROPIC_API_KEY,
         temperature=0,
     )
-    retrieve = Retriever(vector_store, llm)
+    return Retriever(vector_store, llm), build_answer_chain(llm)
 
-    prompt = PromptTemplate.from_template(PROMPT_TEMPLATE)
 
-    # Generate the answer from the retrieved docs, keeping the docs for source attribution
-    answer_chain = (
+def build_answer_chain(llm):
+    # {"question", "source_documents"} -> answer text; .stream() yields it piece by piece
+    return (
         RunnablePassthrough.assign(context=lambda x: format_docs(x["source_documents"]))
-        | prompt
+        | PromptTemplate.from_template(PROMPT_TEMPLATE)
         | llm
         | StrOutputParser()
     )
 
-    qa_chain = RunnablePassthrough.assign(
+
+@lru_cache(maxsize=1)
+def get_qa_chain():
+    # The whole pipeline as one call (used by /ask and the eval suite), keeping the docs for sources
+    retrieve, answer_chain = get_pipeline()
+    return RunnablePassthrough.assign(
         source_documents=lambda x: retrieve(x["question"])
     ).assign(answer=answer_chain)
-    return qa_chain
+
+
+def stream_answer(question: str):
+    """Yield ("sources", [...]) as soon as retrieval is done, then ("token", text) while the answer is written."""
+    retrieve, answer_chain = get_pipeline()
+    docs = retrieve(question)
+    yield "sources", unique_sources(docs)
+    for text in answer_chain.stream({"question": question, "source_documents": docs}):
+        if text:
+            yield "token", text
 
 def format_docs(docs):
     return "\n\n".join(
@@ -102,12 +116,17 @@ def format_docs(docs):
     )
 
 def ask_question(question: str):
-    chain = get_qa_chain()
-    result = chain.invoke({"question": question})
+    result = get_qa_chain().invoke({"question": question})
+    return {
+        "answer": result["answer"],
+        "sources": unique_sources(result["source_documents"]),
+    }
 
+
+def unique_sources(docs):
     # Several chunks often come from the same page; list each file/page once
     sources = []
-    for doc in result["source_documents"]:
+    for doc in docs:
         source = {
             "file": doc.metadata.get("source", "unknown"),
             # Page numbers only mean something for PDFs; HTML/Markdown are loaded as one section
@@ -115,8 +134,4 @@ def ask_question(question: str):
         }
         if source not in sources:
             sources.append(source)
-
-    return {
-        "answer": result["answer"],
-        "sources": sources,
-    }
+    return sources
