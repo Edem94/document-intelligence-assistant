@@ -76,6 +76,8 @@ jobs:
             sleep 5
           done
           echo "Container did not become healthy"
+          # Why: a crashed process shows here (ExitCode 139 = segfault, 137 = killed / out of memory)
+          docker inspect -f 'state={{.State.Status}} exit_code={{.State.ExitCode}} oom_killed={{.State.OOMKilled}} error={{.State.Error}}' app
           exit 1
 
       - name: Smoke test endpoints
@@ -139,6 +141,10 @@ jobs:
           # --port: the image's uvicorn listens on 8000 (Cloud Run's default is 8080)
           # --memory: ~740 MiB at rest (embedding model + index), headroom for requests
           # --max-instances: caps cost - every /ask is a paid Claude API call
+          # --startup-probe: the default is ONE TCP check after 240s, and a cold start (PyTorch import +
+          #   embedding model + index, read from a ~600 MB image) can exceed that. Poll /health instead:
+          #   up to 60 x 10s = 600s (Cloud Run's max), and pass only once the index is loaded AND the API
+          #   key is set - a broken revision fails the deploy and the previous one keeps serving.
           flags: >-
             --port=8000
             --memory=2Gi
@@ -148,6 +154,7 @@ jobs:
             --max-instances=2
             --concurrency=20
             --timeout=60
+            --startup-probe=httpGet.path=/health,httpGet.port=8000,periodSeconds=10,timeoutSeconds=5,failureThreshold=60
             --service-account=${{ vars.GCP_RUNTIME_SA }}
             --allow-unauthenticated
           # Google's front end appends the real client IP to X-Forwarded-For; the rate limiter reads it
