@@ -20,6 +20,7 @@ from datetime import datetime
 from langchain_anthropic import ChatAnthropic
 
 from app.config import ANTHROPIC_API_KEY, BASE_DIR
+from app.grounding import unverified_code
 from app.rag_chain import format_docs, get_qa_chain
 
 EVAL_DIR = os.path.join(BASE_DIR, "eval")
@@ -61,49 +62,6 @@ def check_includes(answer: str, must_include: list) -> list[str]:
         if not any(opt.lower() in text for opt in options):
             missing.append(" | ".join(options))
     return missing
-
-
-def invented_code_lines(answer: str, docs) -> list[str]:
-    """Lines inside the answer's code blocks that don't appear in the retrieved context.
-
-    Catches merged or edited examples (e.g. an invented `image: redis`), which an LLM judge
-    tends to wave through. Indentation is ignored. Config lines must match a whole context line
-    (so `image: redis` doesn't pass because `image: redis:alpine` exists); shell commands only need
-    to appear somewhere, since docs often mention them inline without a "$ " prompt. Lines that are
-    only an elision marker ("# ...", "...") are allowed. A shell command may also differ from a docs
-    command in placeholder values only (image name/tag, port numbers) - see command_shape().
-    """
-    context_text = "\n".join(d.page_content for d in docs)
-    context_lines = {line.strip() for line in context_text.splitlines()}
-    context_shapes = {command_shape(line.removeprefix("$ ")) for line in context_lines if line}
-    invented = []
-    for block in re.findall(r"```[^\n]*\n(.*?)```", answer, re.DOTALL):
-        for line in (l.strip() for l in block.splitlines()):
-            if not line or line in context_lines:
-                continue
-            if re.fullmatch(r"(#|//)?\s*\.\.\..*", line):  # an explicit "# ..." elision isn't invented config
-                continue
-            # Shell commands, with or without a "$ " prompt: the docs often write "$ docker compose up"
-            # (or inline in a sentence, without a prompt). "Command-like" = starts with a lowercase word
-            # and a space, so YAML keys ("image: x") and Dockerfile lines ("EXPOSE 80") never match here.
-            command = line.removeprefix("$ ")
-            is_command = line.startswith("$ ") or re.match(r"[a-z][\w.-]* ", command)
-            if f"$ {command}" in context_lines or (is_command and command in context_text):
-                continue
-            if is_command and command_shape(command) in context_shapes:
-                continue
-            invented.append(line)
-    return invented
-
-
-def command_shape(command: str) -> str:
-    """A command with its placeholder values blanked: `docker run -p 127.0.0.1:5000:5000 my-app:latest`
-    and `docker run -p 127.0.0.1:8000:8000 test:latest` have the same shape. Commands, subcommands and
-    flags are kept, so adding a flag or a different command still counts as invented."""
-    command = re.sub(r"(-t|--tag)\s+\S+", r"\1 IMG", command.strip())
-    command = re.sub(r"\d+", "N", command)
-    command = re.sub(r"\b[\w./-]+:[\w.-]+\b", "IMG", command)  # image:tag (also N.N.N.N:N:N port maps)
-    return re.sub(r"\s+", " ", command)
 
 
 def undisclosed_dependencies(answer: str) -> list[str]:
@@ -197,7 +155,8 @@ def run_case(chain, judge_llm, case: dict) -> dict:
         # On a "partial" case, "I don't have enough information to answer this completely" is the honest
         # opening the prompt asks for - as long as it then delivers what the docs do cover (must_include)
         row["false_refusal"] = bool(HARD_REFUSAL_RE.search(answer)) and not case.get("partial")
-        row["invented_code"] = invented_code_lines(answer, docs)
+        # Same check the app runs before showing an answer (code blocks + inline commands)
+        row["invented_code"] = unverified_code(answer, docs)
         row["undisclosed_deps"] = undisclosed_dependencies(answer)
         row["passed"] = (row["retrieval_hit"] and not row["missing_keywords"] and not row["false_refusal"]
                          and not row["invented_code"] and not row["undisclosed_deps"] and not row["broken_links"]

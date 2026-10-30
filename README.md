@@ -37,7 +37,7 @@ The one remaining failure is a known retrieval issue (see [Limitations](#limitat
 
 **A pass needs more than an LLM judge's score.** Early on I found the judge giving 5/5 to an answer with fabricated YAML, so pass/fail is decided by deterministic checks:
 
-- **Invented code:** every line in the answer's code blocks must appear in the retrieved docs. Changing only placeholder values in a command (an image tag, a port) is allowed; new flags or edited config are not.
+- **Invented code:** every line in the answer's code blocks must appear in the retrieved docs, and every inline command (like `kubectl delete pod`) must be one the docs mention. Changing only placeholder values in a command (an image tag, a port) is allowed; new flags or edited config are not. **The app runs this same check live**: unbacked code is outlined in the answer with a "Not found in the docs - verify before using" note.
 - **Undisclosed setup:** `${VARIABLES}` without saying where they're set, an `include:` file that's never shown, or `develop: watch` without `--watch` all fail.
 - **Retrieval hit, required keywords, command order** (install → start → verify), **broken links**, false refusals, and leaking "the context" wording to the user.
 
@@ -87,7 +87,7 @@ flowchart LR
 | Backend | FastAPI, Uvicorn, Pydantic; streamed responses (NDJSON); per-IP rate limiting |
 | Frontend | Plain HTML/CSS/JS, `marked` + DOMPurify for safe Markdown rendering |
 | Evaluation | Custom suite: deterministic checks + LLM-as-judge |
-| Testing | pytest (52 tests: API, streaming, rate limiting, loader regression tests) |
+| Testing | pytest (64 tests: API, streaming, rate limiting, grounding check, loader regression tests) |
 | Delivery | Docker (multi-stage, non-root), Docker Compose, GitHub Actions, Google Cloud Run |
 
 ## Run it
@@ -121,8 +121,8 @@ uvicorn app.main:app --reload
 | Endpoint | Description |
 |---|---|
 | `GET /` | Web UI |
-| `POST /ask` | `{"question": "..."}` → `{"answer": "...", "sources": [{"file": "...", "page": null}]}` |
-| `POST /ask/stream` | Same answer, streamed as one JSON event per line: `sources` first, then `token`s, then `done` (used by the UI) |
+| `POST /ask` | `{"question": "..."}` → `{"answer": "...", "sources": [{"file": "...", "page": null}], "unverified_code": []}` |
+| `POST /ask/stream` | Same answer, streamed as one JSON event per line: `sources` first, then `token`s, then `grounding` (only if some code isn't in the docs), then `done` (used by the UI) |
 | `GET /health` | `200` when ready; `503` with the reason if the index or API key is missing |
 | `GET /docs` | Interactive API docs (Swagger) |
 
@@ -132,7 +132,7 @@ Both question endpoints are rate-limited, because every question is a paid API c
 
 ```bash
 pip install pytest                 # not in the runtime lock file
-python -m pytest tests -v          # 52 tests, no API key needed (the LLM is stubbed)
+python -m pytest tests -v          # 64 tests, no API key needed (the LLM is stubbed)
 python -m eval.run_eval            # 24-question eval with LLM judge (~3 min, uses your API key)
 python -m eval.run_eval --no-judge --only compose-define-multi docker-write-dockerfile
 ```
@@ -155,6 +155,7 @@ app/
   rag_chain.py   prompt + answer generation (whole or streamed)
   retrieval.py   query rewrite, fusion, reranking, context completion
   rate_limit.py  sliding-window rate limiter, proxy-aware client IP
+  grounding.py   flags code in an answer that the retrieved docs don't back (live + eval)
   ingest.py      loading, cleaning, chunking, indexing
   config.py      paths and settings
 frontend/        index.html, style.css, app.js
@@ -172,6 +173,7 @@ These are the problems that taught me the most. Each one started as "the answer 
 - **Most "LLM problems" were retrieval problems.** A Compose answer kept missing its multi-container example. Rewording the prompt didn't help, because the right chunk never reached the model: it ranked 26th. Tracing which chunks reached the model, instead of tweaking the prompt, found the real cause almost every time.
 - **Test changes against more than one question.** Contextual chunk headers, a cross-encoder reranker and bigger chunks each looked promising, and each made the target question *worse*. Comparing several approaches on the same questions saved me from shipping a plausible-sounding idea.
 - **An LLM judge is not enough.** It rated invented YAML 5/5. Deterministic checks for invented code and undisclosed setup caught what the judge missed.
+- **"Answer only from the docs" is a request, not a guarantee.** On the live site, a restart question got `kubectl delete pod`, a command none of my docs mention: the model filled a gap from memory. So the eval's invented-code check now also runs in the app and warns the user. Against 171 code lines and 17 inline commands from real answers, it raised no false alarms.
 - **Prompt rules interfere with each other.** Adding a rule for `--watch` made the model drop a different rule. Merging related rules into one ordered checklist, and putting a reminder at the end of the prompt, fixed both. Without the eval suite I wouldn't have noticed.
 - **Adding documents can make other answers worse.** New Kubernetes and Docker pages pushed good chunks out of the candidate pool for unrelated questions. Re-running the full eval after every corpus change caught it.
 - **Small infrastructure details matter.** A template `.dockerignore` rule (`**/Dockerfile*`) would have silently dropped `Dockerfile_overview.html` from the index inside the container. Relative links from the docs pointed at my own server and returned 404s.

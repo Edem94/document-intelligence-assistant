@@ -10,6 +10,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from app.config import CHROMA_DIR, ANTHROPIC_API_KEY, EMBEDDING_MODEL
+from app.grounding import unverified_code
 from app.retrieval import Retriever
 
 PROMPT_TEMPLATE = """You are a DevOps documentation assistant helping engineers quickly find accurate
@@ -102,13 +103,19 @@ def get_qa_chain():
 
 
 def stream_answer(question: str):
-    """Yield ("sources", [...]) as soon as retrieval is done, then ("token", text) while the answer is written."""
+    """Yield ("sources", [...]) as soon as retrieval is done, then ("token", text) while the answer is written,
+    then ("grounding", [...]) with any code the docs don't back - only checkable once the answer is complete."""
     retrieve, answer_chain = get_pipeline()
     docs = retrieve(question)
     yield "sources", unique_sources(docs)
+    answer = ""
     for text in answer_chain.stream({"question": question, "source_documents": docs}):
         if text:
+            answer += text
             yield "token", text
+    unverified = unverified_code(answer, docs)
+    if unverified:
+        yield "grounding", unverified
 
 def format_docs(docs):
     return "\n\n".join(
@@ -120,6 +127,8 @@ def ask_question(question: str):
     return {
         "answer": result["answer"],
         "sources": unique_sources(result["source_documents"]),
+        # Code the docs don't back (the model filled a gap from memory) - shown to the user as a warning
+        "unverified_code": unverified_code(result["answer"], result["source_documents"]),
     }
 
 
