@@ -3,10 +3,11 @@ const questionInput = document.getElementById("question");
 const askButton = document.getElementById("ask-button");
 const answerBox = document.getElementById("answer");
 const sourcesBox = document.getElementById("sources");
+const unverifiedBox = document.getElementById("unverified");
 
 // Streams the answer from /ask/stream: newline-delimited JSON events
 // {"type":"sources"} once retrieval is done, {"type":"token"} as text is written, then {"type":"done"}.
-async function askQuestionStreaming(question, { onSources, onText }) {
+async function askQuestionStreaming(question, { onSources, onText, onGrounding }) {
   const response = await fetch("/ask/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -35,6 +36,7 @@ async function askQuestionStreaming(question, { onSources, onText }) {
       const event = JSON.parse(line);
       if (event.type === "sources") onSources(event.sources);
       else if (event.type === "token") onText((answer += event.text));
+      else if (event.type === "grounding") onGrounding(event.unverified_code);
       else if (event.type === "error") throw new Error(event.detail);
       else if (event.type === "done") return answer;
     }
@@ -75,6 +77,30 @@ function fixLinks(container) {
   });
 }
 
+// Code the docs don't back: list it under the answer and outline it in place, so the user verifies it
+function showUnverified(lines) {
+  unverifiedBox.replaceChildren();
+  unverifiedBox.hidden = !lines.length;
+  if (!lines.length) return;
+
+  const intro = document.createElement("strong");
+  intro.textContent = "Not found in the docs - verify before using:";
+  const list = document.createElement("ul");
+  for (const line of lines) {
+    const item = document.createElement("li");
+    const code = document.createElement("code");
+    code.textContent = line; // textContent, never innerHTML: this is model output
+    item.append(code);
+    list.append(item);
+  }
+  unverifiedBox.append(intro, list);
+
+  answerBox.querySelectorAll("pre, code").forEach((el) => {
+    if (el.tagName === "CODE" && el.parentElement.tagName === "PRE") return; // the <pre> gets the outline
+    if (lines.some((line) => el.textContent.includes(line))) el.classList.add("unverified-code");
+  });
+}
+
 function renderSources(sources) {
   if (!sources.length) {
     sourcesBox.textContent = "";
@@ -99,14 +125,18 @@ form.addEventListener("submit", async (event) => {
   answerBox.classList.remove("error");
   answerBox.textContent = "Searching the docs..."; // retrieval takes a few seconds before the first words
   sourcesBox.textContent = "";
+  showUnverified([]);
 
+  let unverified = [];
   try {
     const answer = await askQuestionStreaming(question, {
       onSources: renderSources,
       onText: scheduleRender,
+      onGrounding: (lines) => (unverified = lines), // arrives after the last token
     });
     pendingMarkdown = null;
     renderAnswer(answer); // final render, so nothing is left waiting for the next frame
+    showUnverified(unverified); // after the final render, so the outlines land on the final elements
   } catch (err) {
     pendingMarkdown = null;
     answerBox.classList.add("error");

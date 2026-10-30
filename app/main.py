@@ -86,6 +86,8 @@ class Source(BaseModel):
 class AnswerResponse(BaseModel):
     answer: str
     sources: list[Source]
+    # Code in the answer that the retrieved docs don't contain (empty when everything is backed)
+    unverified_code: list[str] = []
 
 
 @app.get("/health")
@@ -113,13 +115,18 @@ def prepare_question(body: QuestionRequest, request: Request) -> str:
 def ask_stream(body: QuestionRequest, request: Request):
     """Same answer as /ask, streamed as newline-delimited JSON events:
     {"type": "sources", "sources": [...]} once retrieval is done, then {"type": "token", "text": "..."}
-    while the answer is written, then {"type": "done"} - or {"type": "error", "detail": "..."}."""
+    while the answer is written, then {"type": "grounding", "unverified_code": [...]} if some code isn't
+    backed by the docs, then {"type": "done"} - or {"type": "error", "detail": "..."}."""
     question = prepare_question(body, request)
 
     def events():
         try:
             for kind, data in stream_answer(question):
-                payload = {"type": "sources", "sources": data} if kind == "sources" else {"type": "token", "text": data}
+                payload = {
+                    "sources": {"type": "sources", "sources": data},
+                    "token": {"type": "token", "text": data},
+                    "grounding": {"type": "grounding", "unverified_code": data},
+                }[kind]
                 yield json.dumps(payload) + "\n"
             yield json.dumps({"type": "done"}) + "\n"
         except Exception:
