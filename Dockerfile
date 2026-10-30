@@ -12,8 +12,13 @@ ARG PYTHON_VERSION=3.13
 
 # ---- 1. deps: install Python packages -------------------------------------------------------
 FROM python:${PYTHON_VERSION}-slim AS deps
+# HNSWLIB_NO_NATIVE: chroma-hnswlib has no prebuilt wheel for Python 3.13, so it's compiled here - and by
+# default with -march=native, i.e. for the build machine's exact CPU. CI caches this layer, so a library
+# built on a runner with a newer CPU crashed silently (no Python error) on runners and Cloud Run machines
+# without those instructions. Build it for generic x86-64 instead, so the image runs on any machine.
 ENV PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    HNSWLIB_NO_NATIVE=1
 # Compilers only in this stage, in case a package has no prebuilt wheel for this platform
 RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential \

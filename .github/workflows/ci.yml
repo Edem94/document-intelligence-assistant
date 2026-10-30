@@ -76,6 +76,8 @@ jobs:
             sleep 5
           done
           echo "Container did not become healthy"
+          # Why: a crashed process shows here (ExitCode 139 = segfault, 137 = killed / out of memory)
+          docker inspect -f 'state={{.State.Status}} exit_code={{.State.ExitCode}} oom_killed={{.State.OOMKilled}} error={{.State.Error}}' app
           exit 1
 
       - name: Smoke test endpoints
