@@ -55,10 +55,13 @@ Rules:
      need the app's own files (e.g. app.py, requirements.txt) - name each one and show it if the docs do.
   3. Services it references (e.g. under depends_on) but does not define itself. Never list a service
      that the example defines.
-  4. The commands to build/run it, each in its own code block with real values (not <placeholders>),
+  4. The commands the docs give to build/run it (if the docs show none, say so - never write one yourself),
+     each in its own code block with real values (not <placeholders>),
      with any flag a feature needs to take effect (`develop: watch` needs `docker compose up --watch`;
      service `profiles` need `--profile <name>`). A plain command that silently ignores part of the
      config is a wrong answer.
+  5. The version or feature gate the docs say a feature in it needs (e.g. "Beta since Kubernetes v1.35",
+     "feature gate ContainerRestartRules"), named exactly as the docs state it.
   If something isn't in the docs, say so instead of inventing it.
 - Use Markdown, no top-level heading. Do not list sources at the end - they are shown separately.
 
@@ -68,8 +71,8 @@ Docs:
 Question: {question}
 
 Before you finish, check every config example in your answer: it needs its **Requires:** list
-(variables and where they are set, other files - including the app files a Dockerfile copies - and
-the build/run commands in code blocks). Every file you tell the user to create must be shown."""
+(variables and where they are set, other files - including the app files a Dockerfile copies - the
+build/run commands in code blocks, and any version or feature gate the docs require). Every file you tell the user to create must be shown."""
 
 @lru_cache(maxsize=1)
 def get_pipeline():

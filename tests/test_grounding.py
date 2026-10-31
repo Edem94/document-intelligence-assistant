@@ -63,6 +63,18 @@ def test_inline_command_the_docs_never_mention_is_flagged():
     ]
 
 
+def test_command_named_as_missing_from_the_docs_is_not_flagged():
+    # From an eval answer: it points at the command while saying the docs lack it - the honest behaviour
+    answer = ("For a typical restart workflow, you would need to consult documentation on `kubectl delete pod` "
+              "or how your controller handles Pod replacement - those details are not in the docs provided.")
+    assert unverified_code(answer, LIFECYCLE_DOCS) == []
+
+
+def test_disclaimer_does_not_excuse_a_code_block():
+    answer = "The docs don't show this command:\n\n" + code("kubectl delete pod web")
+    assert unverified_code(answer, LIFECYCLE_DOCS) == ["kubectl delete pod web"]
+
+
 def test_inline_code_that_is_not_a_command_is_ignored():
     answer = "Set `restartPolicy: Always`, use `depends_on`, create a `.env` file, see `registry.k8s.io/busybox:1.27.2`."
     assert unverified_code(answer, LIFECYCLE_DOCS) == []
