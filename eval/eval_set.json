@@ -1,9 +1,18 @@
 [
   {
+    "id": "compose-split-include",
+    "question": "How do I split a Docker Compose app into several files with include?",
+    "expected_sources": ["docker_compose_quickstart.html"],
+    "must_include": ["include", "infra.yaml"],
+    "must_match": ["(?m)^services:\\s*\\n +redis:\\s*\\n +image: redis:alpine"],
+    "answerable": true,
+    "notes": "The quickstart moves the Redis service and volume into infra.yaml and includes it. The answer must show infra.yaml itself (a services block starting with redis), not just tell the user to create it - the live multi-container answer did only that."
+  },
+  {
     "id": "compose-define-multi",
     "question": "How do I define a multi-container app with Docker Compose?",
     "expected_sources": ["docker_compose_quickstart.html"],
-    "must_include": ["services:", "docker compose up"],
+    "must_include": ["services:", "docker compose up", "app.py", "requirements.txt"],
     "must_match": ["(?m)^ +redis:\\s*\\n +image:"],
     "answerable": true,
     "notes": "Ideal answer shows the quickstart's two-service web + redis compose.yaml. Known weak spot: retrieval prefers the conceptual Docker_Compose_multi-container_apps.html page."

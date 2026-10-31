@@ -87,6 +87,23 @@ def test_command_with_an_added_flag_is_flagged():
     assert unverified_code(code(line), COMPOSE_DOCS) == [line]
 
 
+def test_docs_line_copied_without_its_trailing_comment_is_accepted():
+    # The live restart answer copied this YAML from k8s_pod_lifecycle.html but dropped the comments,
+    # and both container names were wrongly flagged
+    docs = [Document(page_content=(
+        "  containers:\n"
+        "  - name: try-once-container    # This container will run only once because the restartPolicy is Never.\n"
+        "    restartPolicy: Never     \n"
+        "  - name: on-failure-container  # This container will be restarted on failure.\n"
+    ), metadata={"source": "k8s_pod_lifecycle.html"})]
+    answer = code("containers:\n- name: try-once-container\n  restartPolicy: Never\n- name: on-failure-container", "yaml")
+    assert unverified_code(answer, docs) == []
+
+
+def test_a_comment_does_not_hide_an_edited_value():
+    assert unverified_code(code("image: redis  # the docs' image", "yaml"), COMPOSE_DOCS) == ["image: redis  # the docs' image"]
+
+
 def test_elision_marker_is_not_flagged():
     assert unverified_code(code("services:\n  # ... web service config"), COMPOSE_DOCS) == []
 
