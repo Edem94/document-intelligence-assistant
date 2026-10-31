@@ -48,6 +48,10 @@ button:disabled {
   background: #eaeef2;
   padding: 10px;
   border-radius: 4px;
+  /* Wrap long lines (e.g. YAML with trailing comments from the docs) instead of scrolling sideways.
+     Soft wraps only: copied code keeps its original lines. overflow-x stays as a fallback. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   overflow-x: auto;
 }
 
