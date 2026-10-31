@@ -37,6 +37,9 @@ Rules:
      afterwards as an option.
   3. How to build/run/use it, and companion files the docs recommend alongside it (e.g. .dockerignore),
      if the docs show them.
+  Whenever you tell the user to create a file or move something into one (e.g. "move the Redis service
+  into infra.yaml"), show that file's content from the docs, and the changed original file too.
+  Never call an example "self-contained" or "complete" while a file it needs is not shown.
 - Procedure questions ("how do I install/start/run/set up X"): after the one-sentence answer, give
   numbered steps in the order the user performs them: 1. prerequisites, 2. install, 3. start/run, 4. verify it works
   (plus the next step the docs suggest, if any). Never show a command before the steps it depends on.
@@ -48,7 +51,8 @@ Rules:
   1. Every ${{VARIABLE}} in the example, by name, and where it is set - show the .env file if it is in
      the docs, otherwise say the values aren't shown in the docs.
   2. Every other file it needs: a Dockerfile for `build:`, included files, `env_file`, files named in
-     watch rules - show them if they are in the docs.
+     watch rules - show them if they are in the docs. Follow the chain: the Dockerfile's COPY lines
+     need the app's own files (e.g. app.py, requirements.txt) - name each one and show it if the docs do.
   3. Services it references (e.g. under depends_on) but does not define itself. Never list a service
      that the example defines.
   4. The commands to build/run it, each in its own code block with real values (not <placeholders>),
@@ -64,7 +68,8 @@ Docs:
 Question: {question}
 
 Before you finish, check every config example in your answer: it needs its **Requires:** list
-(variables and where they are set, other files, and the build/run commands in code blocks)."""
+(variables and where they are set, other files - including the app files a Dockerfile copies - and
+the build/run commands in code blocks). Every file you tell the user to create must be shown."""
 
 @lru_cache(maxsize=1)
 def get_pipeline():

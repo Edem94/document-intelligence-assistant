@@ -121,6 +121,41 @@ def add_variable_definitions(vector_store, docs: list[Document]) -> dict:
     return found_defs
 
 
+def add_build_files(vector_store, docs: list[Document]) -> dict:
+    """If a Compose chunk says `build:`, fetch the Dockerfile from the same file, plus the app files it copies.
+
+    Tutorials create app.py, requirements.txt and the Dockerfile in step 1 and the compose.yaml much later,
+    so retrieval finds the YAML but not the files it builds from - and the model then wrote a Dockerfile
+    from memory. Each file is taken from its first mention (where the tutorial creates it) and the two chunks
+    after it, since a code block is often split across chunks (the quickstart's Dockerfile spans three).
+    """
+    found, done_sources = {}, set()
+
+    def first_chunk_with(source, needle, pattern) -> str:
+        # "$contains" ignores case ("FROM " matches "from flask import"), so the regex has the final say
+        hits = vector_store.get(where={"source": source}, where_document={"$contains": needle})
+        matches = [meta for text, meta in zip(hits["documents"], hits["metadatas"]) if re.search(pattern, text)]
+        if not matches:
+            return ""
+        first = min(matches, key=lambda meta: meta["chunk_index"])
+        index = first["chunk_index"]
+        chunks = vector_store.get(where={"$and": [{"source": source}, {"chunk_index": {"$in": [index, index + 1, index + 2]}}]})
+        for text, meta in zip(chunks["documents"], chunks["metadatas"]):
+            found[(source, meta["chunk_index"])] = Document(page_content=text, metadata=meta)
+        return "\n".join(chunks["documents"])
+
+    for doc in docs:
+        source = doc.metadata["source"]
+        if source in done_sources or not re.search(r"(?m)^\s*build:", doc.page_content):
+            continue
+        done_sources.add(source)
+        dockerfile = first_chunk_with(source, "FROM ", r"(?m)^FROM \S")
+        # Files the Dockerfile copies or names (COPY requirements.txt ., ENV FLASK_APP=app.py); "." is everything
+        for name in set(re.findall(r"\b([\w-]+\.(?:txt|py|js|json|toml|lock))\b", dockerfile)):
+            first_chunk_with(source, name, re.escape(name))
+    return found
+
+
 PLATFORMS = ["Windows", "macOS", "Linux"]
 
 
@@ -165,6 +200,8 @@ def expand_neighbors(vector_store, docs: list[Document]) -> list[Document]:
         for text, meta in zip(found["documents"], found["metadatas"]):
             chosen.setdefault((meta["source"], meta["chunk_index"]), Document(page_content=text, metadata=meta))
     for key, doc in add_variable_definitions(vector_store, list(chosen.values())).items():
+        chosen.setdefault(key, doc)
+    for key, doc in add_build_files(vector_store, list(chosen.values())).items():
         chosen.setdefault(key, doc)
     for key, doc in add_platform_variants(vector_store, list(chosen.values())).items():
         chosen.setdefault(key, doc)

@@ -22,23 +22,23 @@ The answer streams in as it's written. Questions outside the docs, like *"How do
 
 ## Results
 
-I evaluate every change against **24 test questions** ([eval/eval_set.json](eval/eval_set.json)) that I wrote and checked against the source docs: 22 answerable ones across all topics, plus 2 out-of-scope traps.
+I evaluate every change against **25 test questions** ([eval/eval_set.json](eval/eval_set.json)) that I wrote and checked against the source docs: 23 answerable ones across all topics, plus 2 out-of-scope traps.
 
 | Metric | First baseline | Now |
 |---|---|---|
-| Pass rate (all checks) | 90% (18/20) | **95.8% (23/24)** |
+| Pass rate (all checks) | 90% (18/20) | **96% (24/25)** |
 | Expected source retrieved | 100% | **100%** |
 | Answers with invented code | 1 | **0** |
 | Out-of-scope questions refused | 100% | **100%** |
-| Faithfulness / completeness (LLM judge, 1–5) | 4.94 / 4.67 | **4.95 / 4.91** |
-| Average latency (full answer) | 3.6 s | 6.6 s |
+| Faithfulness / completeness (LLM judge, 1–5) | 4.94 / 4.67 | **5.00 / 4.96** |
+| Average latency (full answer) | 3.6 s | 6.2 s |
 
-The one remaining failure is a known retrieval issue (see [Limitations](#limitations-and-next-steps)). Latency went up because the pipeline gained a query rewrite and a reranking step; I traded speed for answers that are complete and correct. Answers now stream, so text starts appearing before the full answer is done.
+The one remaining failure is a borderline retrieval issue (see [Limitations](#limitations-and-next-steps)). Latency went up because the pipeline gained a query rewrite and a reranking step; I traded speed for answers that are complete and correct. Answers now stream, so text starts appearing before the full answer is done.
 
 **A pass needs more than an LLM judge's score.** Early on I found the judge giving 5/5 to an answer with fabricated YAML, so pass/fail is decided by deterministic checks:
 
 - **Invented code:** every line in the answer's code blocks must appear in the retrieved docs, and every inline command (like `kubectl delete pod`) must be one the docs mention. Changing only placeholder values in a command (an image tag, a port) is allowed; new flags or edited config are not. **The app runs this same check live**: unbacked code is outlined in the answer with a "Not found in the docs - verify before using" note.
-- **Undisclosed setup:** `${VARIABLES}` without saying where they're set, an `include:` file that's never shown, or `develop: watch` without `--watch` all fail.
+- **Undisclosed setup:** `${VARIABLES}` without saying where they're set, an `include:` file or Dockerfile app file that's never shown (e.g. `app.py`), or `develop: watch` without `--watch` all fail.
 - **Retrieval hit, required keywords, command order** (install → start → verify), **broken links**, false refusals, and leaking "the context" wording to the user.
 
 ## How it works
@@ -51,7 +51,7 @@ flowchart LR
     S1 --> F["Rank fusion<br/>(RRF, 30 candidates,<br/>max 10 per page)"]
     S2 --> F
     F --> RR["LLM rerank<br/>(8 most useful,<br/>max 4 per page)"]
-    RR --> X["Context completion<br/>neighbour chunks · .env definitions ·<br/>install steps for each OS"]
+    RR --> X["Context completion<br/>neighbour chunks · .env definitions ·<br/>Dockerfile + app files for build: ·<br/>install steps for each OS"]
     X --> G["Claude Haiku 4.5<br/>answers from the docs only"]
     G --> A[Answer + sources]
 ```
@@ -69,7 +69,7 @@ flowchart LR
 2. **Reciprocal Rank Fusion** merges the two result lists, always keeping each query's best hit.
 3. **LLM rerank**: embeddings rank "uses the same words" above "actually answers it". A complete two-service Compose file ranked 9th; a reranker picks it reliably.
    Both the 30 candidates and the 8 picks are capped per page (10 and 4), so one long page can't crowd out the rest.
-4. **Context completion** (deterministic, no LLM): adds neighbouring chunks (a tutorial step's intro, its YAML and the files it depends on are split across chunks), the chunk that defines each `${VARIABLE}`, and install steps for every OS when a page lists several.
+4. **Context completion** (deterministic, no LLM): adds neighbouring chunks (a tutorial step's intro, its YAML and the files it depends on are split across chunks), the chunk that defines each `${VARIABLE}`, the Dockerfile and app files behind a Compose `build:`, and install steps for every OS when a page lists several.
 
 **Generation** ([app/rag_chain.py](app/rag_chain.py)) uses Claude Haiku 4.5 with a prompt that:
 
@@ -179,11 +179,14 @@ These are the problems that taught me the most. Each one started as "the answer 
 - **Small infrastructure details matter.** A template `.dockerignore` rule (`**/Dockerfile*`) would have silently dropped `Dockerfile_overview.html` from the index inside the container. Relative links from the docs pointed at my own server and returned 404s.
 - **One long page can crowd out the answer, but a cap can backfire.** For "How do I restart a Pod?", two long pages filled 25 of the 30 candidates, so the key note ("a Pod persists until it is deleted") ranked 16th, just outside the cut-off. Capping chunks per page in the candidate pool got it into the answer. Capping the reranker's *picks* per page as well looked like the next step, but it cut the build commands out of the Dockerfile answer. Comparing four settings on what each answer's context actually contained showed the real fix was more picks (10 instead of 8), not a cap.
 - **Don't trust the client's view of its own IP.** Behind Cloud Run's proxy, every request seems to come from the proxy's IP. The real client IP is in `X-Forwarded-For`, but only the entry the trusted proxy appended is reliable: uvicorn's `--forwarded-allow-ips="*"` reads the first entry, which clients can fake. I verified the fix on the live service with spoofed headers and Cloud Run logs.
+- **Fixing one gap can expose a worse one.** A multi-container answer called its example "self-contained" but never showed the `app.py` and `requirements.txt` the Dockerfile copies. A prompt rule to list them made the model write a Dockerfile *from memory* and claim "the docs show this example". The real one was in the docs, but the tutorial creates it in step 1 and the `compose.yaml` in step 2, so it was never retrieved. The fix was retrieval, not wording: when a Compose chunk says `build:`, fetch that page's Dockerfile and the files it copies. The grounding check caught the invented Dockerfile before any user would have seen it.
+- **A safety net needs its own false-alarm testing.** The live grounding check flagged two YAML lines the model had copied correctly: the docs had trailing `# comments` that the model dropped. A warning that cries wolf teaches users to ignore it, so comments are now ignored on both sides, with a test built from the real chunk.
+- **Silent crashes are often below Python.** CI and Cloud Run both died right after "Waiting for application startup." with no traceback, while the same image always worked on my machine. `chroma-hnswlib` has no prebuilt wheel for Python 3.13, so it was compiled during the Docker build with `-march=native`, tuned to that machine's exact CPU. The CI layer cache then reused it on machines with older CPUs, which crashed on an unsupported instruction. One build flag (`HNSWLIB_NO_NATIVE=1`) fixed it. The lesson: when logs just stop, think native code, CPU and memory, and print the container's exit code.
 
 ## Limitations and next steps
 
-- **One eval case still fails:** "How do I restart a Kubernetes pod?" The answer now explains that a Pod isn't restarted but persists until deleted, but it misses the practical next step: a controller (e.g. a Deployment) creates a replacement. The docs say that in words like "replacement Pods" and "pod template", which the small embedding model doesn't connect to "restart". Those chunks rank 43rd or lower, and an explanation-style search query didn't rank them any better. Next step: a stronger embedding model, measured with the same eval.
-- **A small, self-written eval set.** 24 cases is enough to catch regressions, not to prove general quality. I'd like to grow it and add questions written by other people.
+- **One eval case is borderline:** "How do I restart a Kubernetes pod?" passes on some runs and fails on others. The answer explains that a Pod isn't restarted but persists until deleted, but it misses the practical next step: a controller (e.g. a Deployment) creates a replacement. The docs say that in words like "replacement Pods" and "pod template", which the small embedding model doesn't connect to "restart". Those chunks rank 43rd or lower, and an explanation-style search query didn't rank them any better. Next step: a stronger embedding model, measured with the same eval.
+- **A small, self-written eval set.** 25 cases is enough to catch regressions, not to prove general quality. I'd like to grow it and add questions written by other people.
 - **The first words take a few seconds.** The answer streams as it's written, but query rewriting and reranking (two extra LLM calls) run before it starts.
 - **Rate limits are per instance.** They're kept in memory, so with up to 2 Cloud Run instances a client could get up to 2× the limits; shared limits would need Redis or Cloud Armor.
 - **The image is large** (~600 MB compressed), mostly PyTorch for a small embedding model. An ONNX-based embedder could shrink it a lot.

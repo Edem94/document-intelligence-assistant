@@ -8,6 +8,8 @@ INLINE_CODE_RE = re.compile(r"(?<!`)`([^`\n]+)`(?!`)")
 # A command + its subcommand or flag, e.g. "kubectl delete", "docker compose", "pip install", "docker --version".
 # Starts with a lowercase word and a space, so YAML ("restartPolicy: Always") and Dockerfile lines don't match.
 COMMAND_HEAD_RE = re.compile(r"([a-z][\w.-]*) +([a-z][\w.-]*|--?[\w-]+)")
+# A trailing "  # comment" after code. Needs whitespace before the "#", so "#!/bin/sh" and URL fragments stay.
+TRAILING_COMMENT_RE = re.compile(r"\s+#.*$")
 
 
 def unverified_code(answer: str, docs) -> list[str]:
@@ -31,13 +33,16 @@ def invented_code_lines(answer: str, context_text: str) -> list[str]:
     to appear somewhere, since docs often mention them inline without a "$ " prompt. Lines that are
     only an elision marker ("# ...", "...") are allowed. A shell command may also differ from a docs
     command in placeholder values only (image name/tag, port numbers) - see command_shape().
+    Trailing comments are ignored on both sides: the docs' `- name: try-once-container  # runs once`
+    copied without its comment is still the docs' line.
     """
     context_lines = {line.strip() for line in context_text.splitlines()}
+    context_lines |= {TRAILING_COMMENT_RE.sub("", line) for line in context_lines}
     context_shapes = {command_shape(line.removeprefix("$ ")) for line in context_lines if line}
     invented = []
     for block in FENCED_BLOCK_RE.findall(answer):
         for line in (l.strip() for l in block.splitlines()):
-            if not line or line in context_lines:
+            if not line or line in context_lines or TRAILING_COMMENT_RE.sub("", line) in context_lines:
                 continue
             if re.fullmatch(r"(#|//)?\s*\.\.\..*", line):  # an explicit "# ..." elision isn't invented config
                 continue
