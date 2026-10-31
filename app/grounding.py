@@ -8,6 +8,9 @@ INLINE_CODE_RE = re.compile(r"(?<!`)`([^`\n]+)`(?!`)")
 # A command + its subcommand or flag, e.g. "kubectl delete", "docker compose", "pip install", "docker --version".
 # Starts with a lowercase word and a space, so YAML ("restartPolicy: Always") and Dockerfile lines don't match.
 COMMAND_HEAD_RE = re.compile(r"([a-z][\w.-]*) +([a-z][\w.-]*|--?[\w-]+)")
+# A sentence that itself says what it names isn't in the docs ("... `kubectl delete pod` ... - those
+# details are not in the docs"): a disclosed gap, not an invented command.
+DISCLOSED_GAP_RE = re.compile(r"\b(?:not|n't)\b[^.\n]{0,40}\b(?:in|by) the docs|\bthe docs (?:do not|don't) (?:show|cover|mention|include)", re.IGNORECASE)
 # A trailing "  # comment" after code. Needs whitespace before the "#", so "#!/bin/sh" and URL fragments stay.
 TRAILING_COMMENT_RE = re.compile(r"\s+#.*$")
 
@@ -68,11 +71,14 @@ def unverified_inline_commands(answer: str, context_text: str) -> list[str]:
     """
     prose = FENCED_BLOCK_RE.sub("", answer)
     flagged = []
-    for span in INLINE_CODE_RE.findall(prose):
-        command = span.strip().removeprefix("$ ")
-        head = COMMAND_HEAD_RE.match(command)
-        if head and f"{head.group(1)} {head.group(2)}" not in context_text:
-            flagged.append(command)
+    for sentence in re.split(r"(?<=[.!?])\s+|\n", prose):
+        if DISCLOSED_GAP_RE.search(sentence):
+            continue  # code blocks get no such pass - a disclaimer doesn't make runnable code safe
+        for span in INLINE_CODE_RE.findall(sentence):
+            command = span.strip().removeprefix("$ ")
+            head = COMMAND_HEAD_RE.match(command)
+            if head and f"{head.group(1)} {head.group(2)}" not in context_text:
+                flagged.append(command)
     return flagged
 
 

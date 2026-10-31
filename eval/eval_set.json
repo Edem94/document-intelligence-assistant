@@ -93,6 +93,14 @@
     "notes": "Only partly covered: the docs explain Pods are replaced via controllers, not restarted. A good answer says so up front and does not invent kubectl commands that aren't in the docs."
   },
   {
+    "id": "k8s-container-restart-policy",
+    "question": "How do I make only some containers in a Pod restart when they fail?",
+    "expected_sources": ["k8s_pod_lifecycle.html"],
+    "must_include": ["restartPolicy", ["v1.35", "ContainerRestartRules"]],
+    "answerable": true,
+    "notes": "Per-container restartPolicy is new: the docs say 'Beta since Kubernetes v1.35' and it needs the ContainerRestartRules feature gate. A live answer showed the mixed-policy Pod example without saying so - on an older cluster it doesn't behave as described."
+  },
+  {
     "id": "k8s-start-local-cluster",
     "question": "How do I start Kubernetes?",
     "expected_sources": ["k8s_minikube_start_minikube.html", "Hello_Minikube_ Kubernetes.html", "k8s_install_tools.html"],
