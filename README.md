@@ -50,7 +50,7 @@ flowchart LR
     RW --> S2[Vector search]
     S1 --> F["Rank fusion<br/>(RRF, 30 candidates,<br/>max 10 per page)"]
     S2 --> F
-    F --> RR["LLM rerank<br/>(8 most useful,<br/>max 4 per page)"]
+    F --> RR["LLM rerank<br/>(10 most useful)"]
     RR --> X["Context completion<br/>neighbour chunks · .env definitions ·<br/>Dockerfile + app files for build: ·<br/>install steps for each OS"]
     X --> G["Claude Haiku 4.5<br/>answers from the docs only"]
     G --> A[Answer + sources]
@@ -68,7 +68,7 @@ flowchart LR
 1. **Query rewrite ("code HyDE")**: a YAML-heavy chunk is a poor match for a plain-English question but a close match for similar YAML. So Claude first writes the snippet the answer would contain, and both the question and the snippet are searched.
 2. **Reciprocal Rank Fusion** merges the two result lists, always keeping each query's best hit.
 3. **LLM rerank**: embeddings rank "uses the same words" above "actually answers it". A complete two-service Compose file ranked 9th; a reranker picks it reliably.
-   Both the 30 candidates and the 8 picks are capped per page (10 and 4), so one long page can't crowd out the rest.
+   The 30 candidates are capped at 10 per page, so one long page can't crowd out the rest.
 4. **Context completion** (deterministic, no LLM): adds neighbouring chunks (a tutorial step's intro, its YAML and the files it depends on are split across chunks), the chunk that defines each `${VARIABLE}`, the Dockerfile and app files behind a Compose `build:`, and install steps for every OS when a page lists several.
 
 **Generation** ([app/rag_chain.py](app/rag_chain.py)) uses Claude Haiku 4.5 with a prompt that:
@@ -77,6 +77,8 @@ flowchart LR
 - copies examples verbatim from one source
 - gives setup procedures as ordered steps (prerequisites → install → run → verify)
 - adds a **Requires:** list after every config example
+
+Why each of these choices was made, what I chose it over, and what it cost: [docs/decision-log.md](docs/decision-log.md).
 
 ## Tech stack
 
@@ -87,7 +89,7 @@ flowchart LR
 | Backend | FastAPI, Uvicorn, Pydantic; streamed responses (NDJSON); per-IP rate limiting |
 | Frontend | Plain HTML/CSS/JS, `marked` + DOMPurify for safe Markdown rendering |
 | Evaluation | Custom suite: deterministic checks + LLM-as-judge |
-| Testing | pytest (64 tests: API, streaming, rate limiting, grounding check, loader regression tests) |
+| Testing | pytest (70 tests: API, streaming, rate limiting, grounding check, loader regression tests) |
 | Delivery | Docker (multi-stage, non-root), Docker Compose, GitHub Actions, Google Cloud Run |
 
 ## Run it
